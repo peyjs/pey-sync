@@ -1,0 +1,50 @@
+{
+  "name": "pey.sync",
+  "version": "0.4.0",
+  "type": "module",
+  "description": "Generic user-configured sync for pey.storage collections (backends: git over GitHub Contents API, gitlab over GitLab Files API)",
+  "exports": {
+    ".": "./index.js",
+    "./manifest.json": "./manifest.json",
+    "./lib/error.js": "./lib/error.js",
+    "./lib/serializers.js": "./lib/serializers.js",
+    "./lib/sync-backend.js": "./lib/sync-backend.js",
+    "./lib/sync-collect.js": "./lib/sync-collect.js",
+    "./lib/sync-engine.js": "./lib/sync-engine.js",
+    "./lib/sync-paths.js": "./lib/sync-paths.js",
+    "./lib/sync-remote.js": "./lib/sync-remote.js",
+    "./lib/sync-round.js": "./lib/sync-round.js",
+    "./lib/sync-scope.js": "./lib/sync-scope.js",
+    "./lib/sync-service.js": "./lib/sync-service.js",
+    "./lib/sync-state.js": "./lib/sync-state.js",
+    "./lib/sync-store.js": "./lib/sync-store.js",
+    "./adapters/git-adapter.js": "./adapters/git-adapter.js",
+    "./adapters/gitlab-adapter.js": "./adapters/gitlab-adapter.js",
+    "./adapters/shared.js": "./adapters/shared.js",
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test tests/**/*.test.js"
+  },
+  "files": [
+    "manifest.json",
+    "index.js",
+    "lib/",
+    "adapters/",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "docs"
+  ],
+  "keywords": [
+    "pey",
+    "sync",
+    "git",
+    "gitlab",
+    "bonyan"
+  ],
+  "license": "MIT"
+}
