@@ -1,6 +1,6 @@
 {
   "name": "pey.sync",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "architecture": "0.11",
   "description": "Generic user-configured sync for pey.storage collections (first backend: git)",
   "type": "infrastructure",

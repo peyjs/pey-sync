@@ -701,6 +701,29 @@ test('should_resolve_conflict_via_remote_when_resolved', async () => {
   assert.equal(done.completed, true);
 });
 
+test('should_apply_remote_deletion_when_delete_conflict_resolves_remote', async () => {
+  // Delete-vs-change conflict: choosing the remote side adopts the
+  // deletion — the local record must go, not survive to be pushed again.
+  const { service, storage, remote } = setup({
+    storageData: {
+      docs: [{ id: 'd1', title: 'یادداشت', content: 'نسخه من', folderId: null, updatedAt: 30 }],
+    },
+  });
+  await configure(service);
+  await service.syncNow({ scope: SCOPE });
+  remote.files.delete('یادداشت.md');
+  await storage.write('docs', { id: 'd1', title: 'یادداشت', content: 'نسخه تازه من', folderId: null, updatedAt: 40 });
+  const report = await service.syncNow({ scope: SCOPE });
+  assert.equal(report.completed, false);
+  assert.deepEqual(report.conflicts.map((item) => item.id), ['d1']);
+  const resolved = await service.resolveConflict({ collection: 'docs', id: 'd1', choice: 'remote' });
+  assert.equal(resolved.remaining, 0);
+  assert.equal(await storage.read('docs', 'd1'), null);
+  const done = await service.syncNow({ scope: SCOPE });
+  assert.equal(done.completed, true);
+  assert.deepEqual(done.pushed, []);
+});
+
 test('should_reject_unknown_conflict_when_resolved', async () => {
   const { service } = setup();
   await configure(service);

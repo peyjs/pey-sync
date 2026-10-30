@@ -1,5 +1,16 @@
 # Changelog — pey.sync
 
+## [0.4.1] - 2026-10-30
+
+### Fixed
+
+- Conflict resolution now applies the chosen side for delete-vs-change conflicts: resolving `remote` deletes the local record instead of only forgetting the snapshot entry (which re-pushed the record on the next round).
+- Resolving a path-takeover conflict now frees the displaced previous owner's snapshot entry, so the same conflict no longer re-fires on the next round while other conflicts remain pending.
+
+### Added
+
+- `docs/requirements.md` converted to the pey-repo numbered requirements format (construction source of truth). No contract change.
+
 ## [0.4.0]
 
 ### Added

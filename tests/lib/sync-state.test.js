@@ -97,6 +97,23 @@ test('should_upsert_and_drop_snapshot_entries_when_written', async () => {
   assert.deepEqual((await storage.read('sync_state', 'active')).snapshot, []);
 });
 
+test('should_drop_stale_path_owner_when_resolution_pins_a_winner', async () => {
+  const storage = memoryStorage();
+  const saved = {};
+  await writeSnapshotEntry(storage, saved, { collection: 'docs', id: 'old', path: 'a.md', hash: 'h0', rev: null }, null);
+  // A takeover resolution pins the new owner; the displaced entry must go,
+  // or the same conflict re-fires on the next round.
+  await writeSnapshotEntry(
+    storage,
+    await storage.read('sync_state', 'active'),
+    { collection: 'docs', id: 'new', path: 'a.md', hash: 'h1', rev: null },
+    { collection: 'docs', id: 'new', path: 'a.md' },
+  );
+  assert.deepEqual((await storage.read('sync_state', 'active')).snapshot, [
+    { collection: 'docs', id: 'new', path: 'a.md', hash: 'h1', rev: null },
+  ]);
+});
+
 test('should_record_and_clear_errors_without_bus_when_called', async () => {
   const storage = memoryStorage();
   const events = { calls: [], publish(type, data) { this.calls.push({ type, data }); } };
