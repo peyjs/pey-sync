@@ -5,10 +5,13 @@ import {
   attributePath,
   contentOf,
   extensionsOf,
+  joinBasePath,
   normalizeScope,
   pathEncodedId,
   remoteHash,
   serializeRecord,
+  serializerFor,
+  stripBasePath,
   stripVolatile,
 } from '../../lib/sync-scope.js';
 import { hashRecord } from '../../lib/sync-engine.js';
@@ -157,4 +160,38 @@ test('should_hash_remote_files_on_the_local_basis_when_scoping', () => {
   assert.equal(remoteHash(configs, 'meta', JSON.stringify({ updatedAt: 12, a: 1 })), hashRecord(JSON.stringify({ a: 1 })));
   assert.equal(remoteHash(configs, 'nope', 'x'), null);
   assert.equal(remoteHash(configs, 'meta', 'not-json'), null);
+});
+
+test('should_reject_prototype_keys_as_serializer_names', () => {
+  assert.throws(
+    () => normalizeScope({ collections: [{ collection: 'docs', serializer: 'constructor' }] }),
+    (error) => error?.code === 'SYNC_INVALID_CONFIG',
+  );
+  assert.equal(serializerFor('toString'), undefined);
+  assert.equal(serializerFor('json')?.extension, 'json');
+});
+
+test('should_round_trip_base_paths_for_both_serializers', () => {
+  const configs = normalizeScope({ collections: [
+    { collection: 'docs', serializer: 'markdown', basePath: 'docs' },
+    { collection: 'notes', serializer: 'json', basePath: 'data/notes' },
+  ] });
+  const markdown = joinBasePath(configs[0], 'کار/یادداشت.md');
+  assert.equal(markdown, 'docs/کار/یادداشت.md');
+  assert.equal(attributePath(markdown, configs), configs[0]);
+  assert.equal(stripBasePath(configs[0], markdown), 'کار/یادداشت.md');
+  const json = joinBasePath(configs[1], 'n1.json');
+  assert.equal(json, 'data/notes/n1.json');
+  assert.equal(attributePath(json, configs), configs[1]);
+  assert.equal(pathEncodedId(configs[1], json), 'n1');
+});
+
+test('should_reject_base_paths_with_traversal_or_empty_segments', () => {
+  for (const basePath of ['..', 'docs/../evil', 'a//b']) {
+    assert.throws(
+      () => normalizeScope({ collections: [{ collection: 'docs', serializer: 'markdown', basePath }] }),
+      (error) => error?.code === 'SYNC_INVALID_CONFIG',
+      `expected ${basePath} rejected`,
+    );
+  }
 });

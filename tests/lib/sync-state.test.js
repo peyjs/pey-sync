@@ -2,14 +2,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  advanceSnapshot,
   clearError,
+  mergeRoundSnapshot,
   migrateSnapshot,
   publish,
   readScopeForResolve,
   recordError,
   rememberScope,
   requireBackend,
+  stampSyncedAt,
   writeSnapshotEntry,
 } from '../../lib/sync-state.js';
 import { requireStorage } from '../../lib/sync-store.js';
@@ -44,19 +45,39 @@ test('should_remember_scope_and_resolve_it_when_stored', async () => {
   assert.equal(empty?.code, 'SYNC_INVALID_CONFIG');
 });
 
-test('should_advance_snapshot_with_path_hashes_and_revs_when_completed', async () => {
-  const storage = memoryStorage({
-    docs: [{ id: 'd1', title: 't', content: 'x', folderId: null, updatedAt: 7 }],
+test('should_merge_round_outcomes_into_the_baseline_when_completed', async () => {
+  const storage = memoryStorage();
+  await storage.write('sync_state', {
+    id: 'active',
+    snapshot: [
+      { collection: 'docs', id: 'keep', path: 'keep.md', hash: 'h0', rev: 'r0' },
+      { collection: 'docs', id: 'gone', path: 'gone.md', hash: 'h1', rev: 'r1' },
+      { collection: 'docs', id: 'displaced', path: 'new.md', hash: 'h4', rev: 'r4' },
+    ],
   });
-  const revs = new Map([['t.md', 'rev-1']]);
-  await advanceSnapshot(storage, SCOPE, revs);
+  await mergeRoundSnapshot(storage, {
+    pushed: [{ collection: 'docs', id: 'new', path: 'new.md', hash: 'h2', rev: 'r2' }],
+    pulled: [{ collection: 'docs', id: 'keep', path: 'keep.md', hash: 'h3', rev: 'r3' }],
+    deleteRemote: [{ collection: 'docs', id: 'gone', path: 'gone.md' }],
+    deleteLocal: [],
+  });
+  const saved = await storage.read('sync_state', 'active');
+  assert.deepEqual(saved.snapshot.map(({ path, hash, rev }) => [path, hash, rev]), [
+    ['new.md', 'h2', 'r2'],
+    ['keep.md', 'h3', 'r3'],
+  ]);
+  assert.equal(typeof saved.lastSyncAt, 'number');
+});
+
+test('should_stamp_synced_at_without_touching_the_baseline', async () => {
+  const storage = memoryStorage();
+  await storage.write('sync_state', {
+    id: 'active',
+    snapshot: [{ collection: 'docs', id: 'd1', path: 'a.md', hash: 'h', rev: null }],
+  });
+  await stampSyncedAt(storage);
   const saved = await storage.read('sync_state', 'active');
   assert.equal(saved.snapshot.length, 1);
-  assert.equal(saved.snapshot[0].collection, 'docs');
-  assert.equal(saved.snapshot[0].id, 'd1');
-  assert.equal(saved.snapshot[0].path, 't.md');
-  assert.match(saved.snapshot[0].hash, /^[0-9a-f]{8}$/);
-  assert.equal(saved.snapshot[0].rev, 'rev-1');
   assert.equal(typeof saved.lastSyncAt, 'number');
 });
 

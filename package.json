@@ -1,6 +1,6 @@
 {
   "name": "pey.sync",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "description": "Generic user-configured sync for pey.storage collections (backends: git over GitHub Contents API, gitlab over GitLab Files API)",
   "exports": {

@@ -246,9 +246,22 @@ test('should_scope_subdirectory_when_listed', async () => {
   assert.ok(treeCall.url.includes('path=parsinegar'));
 });
 
-test('should_read_empty_for_missing_tree_when_listed', async () => {
-  const { backend } = setup([treeRoute(() => response(404, {}))]);
+test('should_read_empty_for_missing_tree_when_destination_exists', async () => {
+  const { backend } = setup([
+    { match: (url) => url.includes('/api/v4/projects/') && !url.includes('/repository/'), reply: () => response(200, {}) },
+    { match: (url) => url.includes('/repository/branches/'), reply: () => response(200, {}) },
+    treeRoute(() => response(404, {})),
+  ]);
   assert.deepEqual(await backend.listDir(''), []);
+});
+
+test('should_fail_when_tree_is_missing_and_destination_is_gone', async () => {
+  const { backend } = setup([
+    { match: (url) => url.includes('/api/v4/projects/') && !url.includes('/repository/'), reply: () => response(404, {}) },
+    { match: (url) => url.includes('/repository/'), reply: () => response(404, {}) },
+  ]);
+  const error = await backend.listDir('').catch((caught) => caught);
+  assert.equal(error?.code, 'GITL_NOT_FOUND');
 });
 
 test('should_decode_and_rev_by_blob_when_file_is_read', async () => {
@@ -462,6 +475,38 @@ test('should_delete_missing_file_silently_when_already_gone', async () => {
   assert.deepEqual(await backend.deleteFile('a.md', 'stale'), { ok: true });
   assert.deepEqual(await backend.deleteFile('a.md'), { ok: true });
   assert.equal(calls.filter((call) => call.method === 'DELETE').length, 0, 'nothing to delete twice');
+});
+
+
+test('should_not_follow_pagination_outside_the_instance', async () => {
+  // S2: the token rides every pagination hop, so a Link header pointing
+  // somewhere else must be refused, never followed.
+  const { backend, calls } = setup([
+    { match: (url) => url.includes('/api/v4/projects/') && !url.includes('/repository/'), reply: () => response(200, {}) },
+    { match: (url) => url.includes('/repository/branches/'), reply: () => response(200, {}) },
+    {
+      match: (url) => url.includes('/repository/tree'),
+      reply: () => response(200, [], { link: '<https://evil.example/api/v4/projects/user%2Fnotes/repository/tree?page=2>; rel="next"' }),
+    },
+  ]);
+  const error = await backend.listDir('').catch((caught) => caught);
+  assert.equal(error?.code, 'GITL_REQUEST_FAILED');
+  assert.ok(!calls.some((call) => call.url.includes('evil.example')), 'expected the foreign pagination target never fetched');
+});
+
+test('should_stop_pagination_that_never_terminates', async () => {
+  const tree = 'https://gitlab.com/api/v4/projects/user%2Fnotes/repository/tree?recursive=true&ref=main&pagination=keyset&per_page=100&page=';
+  let page = 0;
+  const { backend } = setup([
+    { match: (url) => url.includes('/api/v4/projects/') && !url.includes('/repository/'), reply: () => response(200, {}) },
+    { match: (url) => url.includes('/repository/branches/'), reply: () => response(200, {}) },
+    {
+      match: (url) => url.includes('/repository/tree'),
+      reply: () => response(200, [], { link: `<${tree}${++page}>; rel="next"` }),
+    },
+  ]);
+  const error = await backend.listDir('').catch((caught) => caught);
+  assert.equal(error?.code, 'GITL_REQUEST_FAILED');
 });
 
 test('should_map_rate_limit_when_throttled', async () => {

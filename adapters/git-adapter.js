@@ -118,9 +118,16 @@ export function createGitAdapter({ repo, branch = DEFAULT_BRANCH, token, fetchFn
     return `/repos/${repo}/contents/${encoded}${forWrite ? '' : `?ref=${encodeURIComponent(branch)}`}`;
   }
 
-  async function collectDir(path, out) {
+  async function collectDir(path, out, isRoot = false) {
     const response = await request(await contentsUrl(path));
     if (response.status === 404) {
+      // A missing subdirectory is an empty tree; a missing ROOT listing
+      // means the repository or branch is gone — never "everything was
+      // remotely deleted".
+      if (isRoot) {
+        await assertDestination();
+        return out;
+      }
       return out;
     }
     if (!response.ok) {
@@ -168,41 +175,52 @@ export function createGitAdapter({ repo, branch = DEFAULT_BRANCH, token, fetchFn
     return { content: decodeContent(payload.content), rev: payload.sha ?? null };
   }
 
+  /**
+   * Verifies the destination still exists (repository and branch). Shared
+   * by open() and by the root-listing path, where GitHub answers 404 both
+   * for a missing destination and for a branch that simply has no files
+   * yet — the two must never read as "everything was remotely deleted".
+   * @returns {Promise<void>}
+   */
+  async function assertDestination() {
+    const repoResponse = await request(`/repos/${repo}`);
+    if (repoResponse.status === 401) {
+      throw gitError('GIT_AUTH_FAILED', 'Git backend rejected the token', { repo });
+    }
+    if (repoResponse.status === 404) {
+      throw gitError('GIT_NOT_FOUND', 'Git repository not found', { repo });
+    }
+    if (rateLimited(repoResponse)) {
+      throw gitError('GIT_RATE_LIMITED', 'Git backend rate limit exhausted', { repo });
+    }
+    if (repoResponse.status === 403) {
+      throw accessDenied({ repo });
+    }
+    if (!repoResponse.ok) {
+      throw gitError('GIT_REQUEST_FAILED', `Git backend check failed: HTTP ${repoResponse.status}`, { repo });
+    }
+    const branchResponse = await request(`/repos/${repo}/branches/${encodeURIComponent(branch)}`);
+    if (branchResponse.status === 404) {
+      throw gitError('GIT_NOT_FOUND', 'Git branch not found', { repo, branch });
+    }
+    if (branchResponse.status === 403) {
+      throw accessDenied({ repo, branch });
+    }
+    if (!branchResponse.ok) {
+      throw gitError('GIT_REQUEST_FAILED', `Git backend check failed: HTTP ${branchResponse.status}`, { repo, branch });
+    }
+  }
+
   return {
     kind: 'git',
 
     async open() {
-      const repoResponse = await request(`/repos/${repo}`);
-      if (repoResponse.status === 401) {
-        throw gitError('GIT_AUTH_FAILED', 'Git backend rejected the token', { repo });
-      }
-      if (repoResponse.status === 404) {
-        throw gitError('GIT_NOT_FOUND', 'Git repository not found', { repo });
-      }
-      if (rateLimited(repoResponse)) {
-        throw gitError('GIT_RATE_LIMITED', 'Git backend rate limit exhausted', { repo });
-      }
-      if (repoResponse.status === 403) {
-        throw accessDenied({ repo });
-      }
-      if (!repoResponse.ok) {
-        throw gitError('GIT_REQUEST_FAILED', `Git backend check failed: HTTP ${repoResponse.status}`, { repo });
-      }
-      const branchResponse = await request(`/repos/${repo}/branches/${encodeURIComponent(branch)}`);
-      if (branchResponse.status === 404) {
-        throw gitError('GIT_NOT_FOUND', 'Git branch not found', { repo, branch });
-      }
-      if (branchResponse.status === 403) {
-        throw accessDenied({ repo, branch });
-      }
-      if (!branchResponse.ok) {
-        throw gitError('GIT_REQUEST_FAILED', `Git backend check failed: HTTP ${branchResponse.status}`, { repo, branch });
-      }
+      await assertDestination();
       return { kind: 'git', repo, branch };
     },
 
     async listDir(path) {
-      return collectDir(path ?? '', []);
+      return collectDir(path ?? '', [], (path ?? '') === '');
     },
 
     async readFile(path) {

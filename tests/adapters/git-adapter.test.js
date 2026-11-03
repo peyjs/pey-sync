@@ -165,12 +165,18 @@ test('should_list_files_recursively_when_listed', async () => {
   ]);
 });
 
-test('should_read_empty_for_missing_root_when_listed', async () => {
-  const { backend } = setup([{
-    match: () => true,
-    reply: () => response(404, {}),
-  }]);
+test('should_read_empty_for_missing_root_when_destination_exists', async () => {
+  const { backend } = setup([
+    { match: (url) => url.endsWith('/repos/user/notes') || url.includes('/branches/main'), reply: () => response(200, {}) },
+    { match: () => true, reply: () => response(404, {}) },
+  ]);
   assert.deepEqual(await backend.listDir(''), []);
+});
+
+test('should_fail_when_root_is_missing_and_destination_is_gone', async () => {
+  const { backend } = setup([{ match: () => true, reply: () => response(404, {}) }]);
+  const error = await backend.listDir('').catch((caught) => caught);
+  assert.equal(error?.code, 'GIT_NOT_FOUND');
 });
 
 test('should_decode_utf8_when_file_is_read', async () => {

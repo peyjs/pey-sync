@@ -532,7 +532,7 @@ test('should_tolerate_corrupt_legacy_manifest_when_synced', async () => {
   await configure(service);
   const report = await service.syncNow({ scope: SCOPE });
   assert.equal(report.completed, true);
-  assert.ok(remote.files.has('sync-manifest.json'), 'expected an unreadable manifest left in place');
+  assert.ok(remote.files.has('sync-manifest.json'), 'expected an unreadable manifest left in place (never parsed, never swept)');
   assert.ok(await storage.read('docs', 'd1'));
 });
 
@@ -562,7 +562,7 @@ test('should_migrate_legacy_state_and_clean_artifacts_when_synced', async () => 
   assert.deepEqual(report.pushed.map((item) => item.id), ['d1'], 'expected a seeded hash to read the local edit as a push');
   assert.equal(decode(remote.files.get('یادداشت.md').content), 'محتوای تازه');
   assert.ok(!remote.files.has('sync-manifest.json'), 'expected the legacy manifest swept');
-  assert.ok(!remote.files.has('folders/f1.json'), 'expected the stale folder file swept');
+  assert.ok(remote.files.has('folders/f1.json'), 'expected the stale folder file left in place (deletion trusts only the known manifest path)');
   assert.deepEqual(await service.hasPendingChanges({ scope: SCOPE }), { pending: false });
 });
 
@@ -722,6 +722,186 @@ test('should_apply_remote_deletion_when_delete_conflict_resolves_remote', async 
   const done = await service.syncNow({ scope: SCOPE });
   assert.equal(done.completed, true);
   assert.deepEqual(done.pushed, []);
+});
+
+
+test('should_fail_with_remote_invalid_when_remote_json_is_corrupt', async () => {
+  // F3: a corrupt remote file must block the round, never read as
+  // "remotely deleted".
+  const { service, storage, remote } = setup({
+    storageData: { notes: [{ key: 'n1', text: 'نسخه محلی', mtime: 10 }] },
+  });
+  await configure(service);
+  await service.syncNow({ scope: JSON_SCOPE });
+  remote.files.set('notes/n1.json', { content: Buffer.from('invalid json').toString('base64'), rev: 'r2' });
+  const report = await service.syncNow({ scope: JSON_SCOPE }).catch((caught) => caught);
+  assert.equal(report?.code, 'SYNC_REMOTE_INVALID');
+  assert.equal(report?.detail?.path, 'notes/n1.json');
+  assert.ok(await storage.read('notes', 'n1'), 'expected the local record intact');
+});
+
+test('should_delete_remote_file_when_delete_conflict_resolves_local', async () => {
+  // F4: delete-vs-edit — the local side is the deletion, so choosing it
+  // drops the remote file.
+  const { service, storage, remote } = setup({
+    storageData: { docs: [{ id: 'd1', title: 'یادداشت', content: 'نسخه من', folderId: null, updatedAt: 30 }] },
+  });
+  await configure(service);
+  await service.syncNow({ scope: SCOPE });
+  remote.files.set('یادداشت.md', { content: Buffer.from('نسخه طرف').toString('base64'), rev: 'd2' });
+  await storage.delete('docs', 'd1');
+  const report = await service.syncNow({ scope: SCOPE });
+  assert.equal(report.completed, false);
+  assert.deepEqual(report.conflicts.map((item) => item.id), ['d1']);
+  const resolved = await service.resolveConflict({ collection: 'docs', id: 'd1', choice: 'local' });
+  assert.equal(resolved.remaining, 0);
+  assert.equal(remote.files.has('یادداشت.md'), false, 'choosing the local side of a delete conflict applies the deletion');
+  const done = await service.syncNow({ scope: SCOPE });
+  assert.equal(done.completed, true);
+});
+
+test('should_reset_baseline_when_backend_identity_changes', async () => {
+  // F2: switching destinations starts from a fresh baseline — a new empty
+  // target is a first sync, never "everything was remotely deleted".
+  const storage = memoryStorage({
+    docs: [{ id: 'd1', title: 'یادداشت', content: 'نسخه', folderId: null, updatedAt: 10 }],
+  });
+  const first = fakeGitHub({});
+  const second = fakeGitHub({});
+  let target = first;
+  const service = createService({
+    storage,
+    events: events(),
+    fetchFn: async (url, options = {}) => target.fetchFn(url, options),
+  });
+  await service.configureBackend({ kind: 'git', params: { repo: 'u/r', branch: 'main', token: 'tok' } });
+  await service.syncNow({ scope: SCOPE });
+  assert.ok(first.files.has('یادداشت.md'));
+  target = second;
+  await service.configureBackend({ kind: 'git', params: { repo: 'u/r', branch: 'release', token: 'tok' } });
+  const report = await service.syncNow({ scope: SCOPE });
+  assert.equal(report.completed, true);
+  assert.deepEqual(report.deleteLocal, []);
+  assert.deepEqual(report.pushed.map((item) => item.id), ['d1']);
+  assert.ok(await storage.read('docs', 'd1'), 'expected local data untouched by the switch');
+  assert.ok(second.files.has('یادداشت.md'), 'expected the record pushed to the new destination');
+});
+
+test('should_keep_host_edits_dirty_when_they_race_the_round', async () => {
+  // F1: a host edit landing after capture must stay dirty, not be marked
+  // synced behind a push of stale content.
+  const storage = memoryStorage({
+    docs: [{ id: 'd1', title: 'یادداشت', content: 'نسخه اول', folderId: null, updatedAt: 10 }],
+  });
+  const remote = fakeGitHub({});
+  let edited = false;
+  const service = createService({
+    storage,
+    events: events(),
+    fetchFn: async (url, options = {}) => {
+      const response = await remote.fetchFn(url, options);
+      if (!edited && (options.method ?? 'GET') === 'GET' && String(url).includes('/contents/?')) {
+        edited = true;
+        await storage.write('docs', { id: 'd1', title: 'یادداشت', content: 'ویرایش هم‌زمان', folderId: null, updatedAt: 11 });
+      }
+      return response;
+    },
+  });
+  await service.configureBackend({ kind: 'git', params: { repo: 'u/r', branch: 'main', token: 'tok' } });
+  await service.syncNow({ scope: SCOPE });
+  assert.equal(remote.files.has('یادداشت.md'), false, 'expected the stale-content push to be skipped');
+  const pending = await service.hasPendingChanges({ scope: SCOPE });
+  assert.deepEqual(pending, { pending: true }, 'the mid-round edit must not be marked synced');
+  const second = await service.syncNow({ scope: SCOPE });
+  assert.equal(second.completed, true);
+  assert.ok(second.pushed.some((item) => item.id === 'd1'), 'expected the edit to push on the next round');
+});
+
+test('should_keep_other_records_dirty_when_a_conflict_resolves', async () => {
+  // F1 (R4): resolving the last conflict pins only its own baseline entry —
+  // an unrelated record edited meanwhile stays dirty.
+  const { service, storage, remote } = setup({
+    storageData: { docs: [{ id: 'd1', title: 'یادداشت', content: 'نسخه من', folderId: null, updatedAt: 30 }] },
+  });
+  await configure(service);
+  await service.syncNow({ scope: SCOPE });
+  remote.files.set('یادداشت.md', { content: Buffer.from('نسخه طرف').toString('base64'), rev: 'd2' });
+  await storage.write('docs', { id: 'd1', title: 'یادداشت', content: 'نسخه تازه من', folderId: null, updatedAt: 40 });
+  const report = await service.syncNow({ scope: SCOPE });
+  assert.equal(report.completed, false);
+  await storage.write('docs', { id: 'd2', title: 'دیگر', content: 'کار دیگر', folderId: null, updatedAt: 50 });
+  const resolved = await service.resolveConflict({ collection: 'docs', id: 'd1', choice: 'local' });
+  assert.equal(resolved.remaining, 0);
+  const pending = await service.hasPendingChanges({ scope: SCOPE });
+  assert.deepEqual(pending, { pending: true }, 'the unrelated edit must stay dirty after the resolution');
+});
+
+test('should_record_finalize_failures_as_run_errors', async () => {
+  // F6: a rejection inside finalizeRound must ride the mapped run-error
+  // path (recorded + published), not escape raw past the catch.
+  const base = memoryStorage({
+    docs: [{ id: 'd1', title: 'یادداشت', content: 'x', folderId: null, updatedAt: 10 }],
+  });
+  const storage = {
+    async query(collection) {
+      return base.query(collection, {});
+    },
+    async read(collection, key) {
+      return base.read(collection, key);
+    },
+    async write(collection, record) {
+      // Fail exactly the baseline-merge write of the finalize step.
+      if (collection === 'sync_state' && record.snapshot && record.lastError === undefined) {
+        throw new Error('state down');
+      }
+      return base.write(collection, record);
+    },
+    async delete(collection, key) {
+      return base.delete(collection, key);
+    },
+  };
+  const service = createService({ storage, events: events(), fetchFn: fakeGitHub({}).fetchFn });
+  await service.configureBackend({ kind: 'git', params: { repo: 'u/r', branch: 'main', token: 'tok' } });
+  const report = await service.syncNow({ scope: SCOPE }).catch((caught) => caught);
+  assert.equal(report?.code, 'SYNC_STORAGE_UNAVAILABLE', 'expected the finalize failure mapped, not raw');
+  const status = await service.getStatus();
+  assert.equal(status.lastError?.code, 'SYNC_STORAGE_UNAVAILABLE');
+});
+
+test('should_reject_overlapping_sync_operations_when_one_is_running', async () => {
+  const { service } = setup({
+    storageData: { docs: [{ id: 'd1', title: 'یادداشت', content: 'x', folderId: null, updatedAt: 10 }] },
+  });
+  await configure(service);
+  const first = service.syncNow({ scope: SCOPE });
+  const second = await service.syncNow({ scope: SCOPE }).catch((caught) => caught);
+  assert.equal(second?.code, 'SYNC_IN_PROGRESS');
+  await first;
+});
+
+test('should_fail_when_root_listing_is_missing_and_destination_is_gone', async () => {
+  // S1: a 404 root listing with a vanished destination is not "everything
+  // was remotely deleted".
+  const storage = memoryStorage({
+    docs: [{ id: 'd1', title: 'یادداشت', content: 'x', folderId: null, updatedAt: 10 }],
+  });
+  let repoGone = false;
+  const remote = fakeGitHub({});
+  const service = createService({
+    storage,
+    events: events(),
+    fetchFn: async (url, options = {}) => {
+      if (repoGone && String(url).includes('/repos/u/r')) {
+        return { status: 404, ok: false, headers: { get: () => null }, json: async () => ({}) };
+      }
+      return remote.fetchFn(url, options);
+    },
+  });
+  await service.configureBackend({ kind: 'git', params: { repo: 'u/r', branch: 'main', token: 'tok' } });
+  repoGone = true;
+  const report = await service.syncNow({ scope: SCOPE }).catch((caught) => caught);
+  assert.equal(report?.code, 'SYNC_REPO_NOT_FOUND');
+  assert.ok(await storage.read('docs', 'd1'), 'expected local data untouched');
 });
 
 test('should_reject_unknown_conflict_when_resolved', async () => {

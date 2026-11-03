@@ -235,11 +235,18 @@ export function createGitlabAdapter({ repo, branch = DEFAULT_BRANCH, token, base
     return payload;
   }
 
-  async function collectPage(url, out) {
+  const MAX_LIST_PAGES = 50;
+
+  async function collectPage(url, out, walk) {
     const response = await request(url);
     if (response.status === 404) {
-      // 17.7+: a missing path is 404; for the engine the empty tree is
-      // data, never an error (open() already validated the project).
+      // 17.7+: a missing path is 404. For a subdirectory the empty tree is
+      // data; a missing ROOT listing means the project or branch is gone —
+      // never "everything was remotely deleted".
+      if (walk.root) {
+        await assertDestination();
+        return out;
+      }
       return out;
     }
     if (response.status === 401) {
@@ -256,55 +263,82 @@ export function createGitlabAdapter({ repo, branch = DEFAULT_BRANCH, token, base
       }
     }
     // Keyset pagination: the Link header (rel="next") carries the exact
-    // next URL including the page token — follow it verbatim, with the
-    // auth headers applied again on every hop.
+    // next URL including the page token. The token rides every hop, so the
+    // next URL is resolved and validated against the instance origin and
+    // API path prefix before it is ever followed, with a page cap and a
+    // loop guard.
     const link = response.headers?.get?.('link');
     const match = typeof link === 'string' ? link.match(/<([^>]+)>;\s*rel="next"/i) : null;
     if (match) {
-      await collectPage(match[1], out);
+      const next = new URL(match[1], url);
+      const current = new URL(url);
+      const marker = current.pathname.indexOf('/projects/');
+      const prefix = marker >= 0 ? current.pathname.slice(0, marker) : '';
+      if (next.origin !== current.origin
+        || !next.pathname.startsWith(`${prefix}/projects/`)
+        || walk.seen.has(next.href)
+        || walk.pages >= MAX_LIST_PAGES) {
+        throw gitlabError('GITL_REQUEST_FAILED', 'GitLab backend pagination left the configured instance or did not terminate', { repo });
+      }
+      walk.pages += 1;
+      walk.seen.add(next.href);
+      walk.root = false;
+      await collectPage(next.href, out, walk);
     }
     return out;
+  }
+
+  /**
+   * Verifies the destination still exists (project and branch). Shared by
+   * open() and by the root-listing path, where the tree endpoint answers
+   * 404 both for a missing destination and for a branch that simply has no
+   * files yet — the two must never read as "everything was remotely
+   * deleted".
+   * @returns {Promise<void>}
+   */
+  async function assertDestination() {
+    const project = `${api}/projects/${encodeURIComponent(repo)}`;
+    const projectResponse = await request(project);
+    if (projectResponse.status === 401) {
+      throw gitlabError('GITL_AUTH_FAILED', 'GitLab backend rejected the token', { repo });
+    }
+    if (projectResponse.status === 404) {
+      throw gitlabError('GITL_NOT_FOUND', 'GitLab project not found', { repo });
+    }
+    if (rateLimited(projectResponse)) {
+      throw gitlabError('GITL_RATE_LIMITED', 'GitLab backend rate limit exhausted', { repo });
+    }
+    if (projectResponse.status === 403) {
+      throw insufficientScopes({ repo });
+    }
+    if (!projectResponse.ok) {
+      throw gitlabError('GITL_REQUEST_FAILED', `GitLab backend check failed: HTTP ${projectResponse.status}`, { repo });
+    }
+    const branchResponse = await request(`${project}/repository/branches/${encodeURIComponent(branch)}`);
+    if (branchResponse.status === 404) {
+      throw gitlabError('GITL_NOT_FOUND', 'GitLab branch not found', { repo, branch });
+    }
+    if (branchResponse.status === 401) {
+      throw gitlabError('GITL_AUTH_FAILED', 'GitLab backend rejected the token', { repo, branch });
+    }
+    failIfResponseDoes(branchResponse, { branch });
+    if (!branchResponse.ok) {
+      throw gitlabError('GITL_REQUEST_FAILED', `GitLab backend check failed: HTTP ${branchResponse.status}`, { repo, branch });
+    }
   }
 
   return {
     kind: 'gitlab',
 
     async open() {
-      const project = `${api}/projects/${encodeURIComponent(repo)}`;
-      const projectResponse = await request(project);
-      if (projectResponse.status === 401) {
-        throw gitlabError('GITL_AUTH_FAILED', 'GitLab backend rejected the token', { repo });
-      }
-      if (projectResponse.status === 404) {
-        throw gitlabError('GITL_NOT_FOUND', 'GitLab project not found', { repo });
-      }
-      if (rateLimited(projectResponse)) {
-        throw gitlabError('GITL_RATE_LIMITED', 'GitLab backend rate limit exhausted', { repo });
-      }
-      if (projectResponse.status === 403) {
-        throw insufficientScopes({ repo });
-      }
-      if (!projectResponse.ok) {
-        throw gitlabError('GITL_REQUEST_FAILED', `GitLab backend check failed: HTTP ${projectResponse.status}`, { repo });
-      }
-      const branchResponse = await request(`${project}/repository/branches/${encodeURIComponent(branch)}`);
-      if (branchResponse.status === 404) {
-        throw gitlabError('GITL_NOT_FOUND', 'GitLab branch not found', { repo, branch });
-      }
-      if (branchResponse.status === 401) {
-        throw gitlabError('GITL_AUTH_FAILED', 'GitLab backend rejected the token', { repo, branch });
-      }
-      failIfResponseDoes(branchResponse, { branch });
-      if (!branchResponse.ok) {
-        throw gitlabError('GITL_REQUEST_FAILED', `GitLab backend check failed: HTTP ${branchResponse.status}`, { repo, branch });
-      }
+      await assertDestination();
       return { kind: 'gitlab', repo, branch, baseUrl: base };
     },
 
     async listDir(path) {
       const subdir = path ? `&path=${encodeURIComponent(path)}` : '';
       const first = `${api}/projects/${encodeURIComponent(repo)}/repository/tree?recursive=true&ref=${encodeURIComponent(branch)}&pagination=keyset&per_page=${TREE_PAGE_SIZE}${subdir}`;
-      return collectPage(first, []);
+      return collectPage(first, [], { root: !path, pages: 0, seen: new Set([first]) });
     },
 
     async readFile(path) {

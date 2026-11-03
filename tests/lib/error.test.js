@@ -9,7 +9,7 @@ test('should_build_plain_operational_error_when_called', () => {
   assert.deepEqual({ ...error, timestamp: 'x' }, {
     code: 'SYNC_NETWORK_FAILED',
     message: 'nope',
-    source: 'pey.sync.service',
+    source: 'pey.sync',
     type: 'operational',
     timestamp: 'x',
     detail: { repo: 'u/r' },
@@ -27,6 +27,6 @@ test('should_build_startup_and_critical_errors_when_called', () => {
   assert.equal(syncStartupError('SYNC_X', 'y').type, 'startup');
   const critical = syncCriticalError('LOST', 'gone', { service: 's' });
   assert.equal(critical.type, 'critical');
-  assert.equal(critical.source, 'pey.sync.service');
+  assert.equal(critical.source, 'pey.sync');
   assert.deepEqual(critical.detail, { service: 's' });
 });

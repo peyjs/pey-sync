@@ -37,8 +37,12 @@ test('should_place_records_on_id_and_title_paths_when_built', () => {
   const { byId, mapping } = maps();
   const folderMaps = new Map([['folders', { byId, mapping }]]);
   assert.deepEqual(
-    pathForRecord({ id: 'x', title: 't' }, { collection: 'docs', serializer: 'json', idField: 'id', folders: null }, folderMaps),
+    pathForRecord({ id: 'x', title: 't' }, { collection: 'docs', serializer: 'json', basePath: 'docs', idField: 'id', folders: null }, folderMaps),
     { path: 'docs/x.json', relocated: false },
+  );
+  assert.deepEqual(
+    pathForRecord({ id: 'x', title: 't' }, { collection: 'docs', serializer: 'json', basePath: '', idField: 'id', folders: null }, folderMaps),
+    { path: 'x.json', relocated: false },
   );
   assert.deepEqual(
     pathForRecord(
@@ -47,6 +51,14 @@ test('should_place_records_on_id_and_title_paths_when_built', () => {
       folderMaps,
     ),
     { path: 'کار/زیر/یادداشت.md', relocated: false },
+  );
+  assert.deepEqual(
+    pathForRecord(
+      { id: 'd1', title: 'یادداشت', folderId: 'f2' },
+      { collection: 'docs', serializer: 'markdown', basePath: 'docs', idField: 'id', titleField: 'title', folders: MAPPING },
+      folderMaps,
+    ),
+    { path: 'docs/کار/زیر/یادداشت.md', relocated: false },
   );
   assert.deepEqual(
     pathForRecord({ id: 'd1', title: '  ' }, { collection: 'docs', serializer: 'markdown', idField: 'id', titleField: 'title', folders: null }, folderMaps).path,

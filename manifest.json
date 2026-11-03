@@ -1,10 +1,9 @@
 {
   "name": "pey.sync",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "architecture": "0.11",
   "description": "Generic user-configured sync for pey.storage collections (first backend: git)",
   "type": "infrastructure",
-  "adapterType": "sync-target",
   "dependencies": {
     "required": ["pey.storage.service"],
     "optional": []
@@ -22,14 +21,14 @@
             { "name": "params", "type": "object" }
           ],
           "returns": "Promise<object>",
-          "errors": ["SYNC_INVALID_CONFIG", "SYNC_AUTH_FAILED", "SYNC_REPO_NOT_FOUND", "SYNC_NETWORK_FAILED", "SYNC_STORAGE_UNAVAILABLE"]
+          "errors": ["SYNC_INVALID_CONFIG", "SYNC_AUTH_FAILED", "SYNC_REPO_NOT_FOUND", "SYNC_NETWORK_FAILED", "SYNC_STORAGE_UNAVAILABLE", "SYNC_IN_PROGRESS"]
         },
         {
           "name": "removeBackend",
           "description": "Clears credentials and sync state without touching local data",
           "params": [],
           "returns": "Promise<object>",
-          "errors": ["SYNC_STORAGE_UNAVAILABLE"]
+          "errors": ["SYNC_STORAGE_UNAVAILABLE", "SYNC_IN_PROGRESS"]
         },
         {
           "name": "getStatus",
@@ -55,7 +54,7 @@
             { "name": "message", "type": "string" }
           ],
           "returns": "Promise<object>",
-          "errors": ["SYNC_NOT_CONFIGURED", "SYNC_INVALID_CONFIG", "SYNC_AUTH_FAILED", "SYNC_REPO_NOT_FOUND", "SYNC_NETWORK_FAILED", "SYNC_RATE_LIMITED", "SYNC_PATH_COLLISION", "SYNC_CONCURRENT_CHANGE", "SYNC_STORAGE_UNAVAILABLE"]
+          "errors": ["SYNC_NOT_CONFIGURED", "SYNC_INVALID_CONFIG", "SYNC_AUTH_FAILED", "SYNC_REPO_NOT_FOUND", "SYNC_NETWORK_FAILED", "SYNC_RATE_LIMITED", "SYNC_PATH_COLLISION", "SYNC_CONCURRENT_CHANGE", "SYNC_STORAGE_UNAVAILABLE", "SYNC_REMOTE_INVALID", "SYNC_IN_PROGRESS"]
         },
         {
           "name": "resolveConflict",
@@ -66,7 +65,7 @@
             { "name": "choice", "type": "'local' | 'remote'" }
           ],
           "returns": "Promise<object>",
-          "errors": ["SYNC_NOT_CONFIGURED", "SYNC_INVALID_CONFIG", "SYNC_AUTH_FAILED", "SYNC_REPO_NOT_FOUND", "SYNC_NETWORK_FAILED", "SYNC_RATE_LIMITED", "SYNC_CONCURRENT_CHANGE", "SYNC_STORAGE_UNAVAILABLE"]
+          "errors": ["SYNC_NOT_CONFIGURED", "SYNC_INVALID_CONFIG", "SYNC_AUTH_FAILED", "SYNC_REPO_NOT_FOUND", "SYNC_NETWORK_FAILED", "SYNC_RATE_LIMITED", "SYNC_CONCURRENT_CHANGE", "SYNC_STORAGE_UNAVAILABLE", "SYNC_IN_PROGRESS"]
         }
       ]
     }

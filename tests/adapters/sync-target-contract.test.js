@@ -66,8 +66,11 @@ test('should_validate_reachability_when_opened', async () => {
   assert.deepEqual(await backend.open(), { kind: 'git', repo: 'user/notes', branch: 'main' });
 });
 
-test('should_read_missing_root_as_empty_when_listed', async () => {
-  const { backend } = setup([{ match: () => true, reply: () => response(404, {}) }]);
+test('should_read_missing_root_as_empty_when_destination_exists', async () => {
+  const { backend } = setup([
+    { match: (url) => url.endsWith('/repos/user/notes') || url.includes('/branches/main'), reply: () => response(200, {}) },
+    { match: () => true, reply: () => response(404, {}) },
+  ]);
   assert.deepEqual(await backend.listDir(''), []);
   assert.equal(await backend.readFile('gone.md'), null);
   assert.deepEqual(await backend.deleteFile('gone.md', 'sha-1'), { ok: true });
@@ -101,8 +104,12 @@ test('should_validate_gitlab_reachability_when_opened', async () => {
   assert.deepEqual(await backend.open(), { kind: 'gitlab', repo: 'user/notes', branch: 'main', baseUrl: 'https://gitlab.com' });
 });
 
-test('should_read_gitlab_missing_tree_and_file_as_empty_when_listed', async () => {
-  const { backend } = setupGitlab([{ match: (url) => url.includes('/repository/'), reply: () => response(404, {}) }]);
+test('should_read_gitlab_missing_tree_and_file_as_empty_when_destination_exists', async () => {
+  const { backend } = setupGitlab([
+    { match: (url) => url.includes('/api/v4/projects/') && !url.includes('/repository/'), reply: () => response(200, {}) },
+    { match: (url) => url.includes('/repository/branches/'), reply: () => response(200, {}) },
+    { match: (url) => url.includes('/repository/'), reply: () => response(404, {}) },
+  ]);
   assert.deepEqual(await backend.listDir(''), []);
   assert.equal(await backend.readFile('gone.md'), null);
   assert.deepEqual(await backend.deleteFile('gone.md', 'blob-1'), { ok: true });
