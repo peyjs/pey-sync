@@ -413,6 +413,11 @@ export function createGitlabAdapter({ repo, branch = DEFAULT_BRANCH, token, base
         throw gitlabError('GITL_AUTH_FAILED', 'GitLab backend rejected the token', { repo, path });
       }
       failIfResponseDoes(response, { path });
+      if (response.status === 400 || response.status === 409) {
+        // Mirrors the write path: the lock was verified against readPayload,
+        // so a generic commit failure reads as a concurrent change.
+        throw gitlabError('GITL_REV_MISMATCH', 'GitLab backend file changed underneath the delete', { repo, path });
+      }
       if (!response.ok) {
         throw gitlabError('GITL_REQUEST_FAILED', `GitLab backend delete failed: HTTP ${response.status}`, { repo, path });
       }

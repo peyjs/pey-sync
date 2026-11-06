@@ -402,3 +402,18 @@ test('should_map_auth_and_rate_limit_when_delete_hits_401_or_403_rate', async ()
     (error) => error.code === 'GIT_RATE_LIMITED',
   );
 });
+
+test('should_map_rev_mismatch_when_delete_hits_409_or_422', async () => {
+  for (const status of [409, 422]) {
+    const stale = setup([
+      repoOk(),
+      branchOk(),
+      { match: (url, options) => options.method === 'DELETE', reply: () => response(status, {}) },
+    ]);
+    await assert.rejects(
+      stale.backend.deleteFile('docs/a.md', 'rev-1'),
+      (error) => error.code === 'GIT_REV_MISMATCH',
+      `HTTP ${status} on delete must read as a concurrent change`,
+    );
+  }
+});

@@ -1174,3 +1174,39 @@ test('should_report_concurrent_change_when_remote_moves_mid_round', async () => 
     (error) => error.code === 'SYNC_CONCURRENT_CHANGE',
   );
 });
+
+test('should_record_and_publish_a_mid_resolution_failure_when_the_remote_write_fails', async () => {
+  const storage = memoryStorage({
+    docs: [{ id: 'd1', title: 'یادداشت', content: 'نسخه من', folderId: null, updatedAt: 30 }],
+  });
+  const remote = fakeGitHub({});
+  const innerFetch = remote.fetchFn;
+  let failWrites = false;
+  // The wrapper is installed before the service is created: the service
+  // captured the fetch implementation at construction time.
+  const fetchFn = async (url, options = {}) => {
+    if (failWrites && (options.method ?? 'GET') === 'PUT') {
+      return { status: 500, ok: false, headers: { get: () => null }, json: async () => ({}) };
+    }
+    return innerFetch(url, options);
+  };
+  const bus = events();
+  const service = createService({ storage, events: bus, fetchFn });
+  await configure(service);
+  await service.syncNow({ scope: SCOPE });
+  remote.files.set('یادداشت.md', { content: encode('نسخه طرف'), rev: 'd2' });
+  await storage.write('docs', { id: 'd1', title: 'یادداشت', content: 'نسخه تازه من', folderId: null, updatedAt: 40 });
+  await service.syncNow({ scope: SCOPE });
+  bus.seen.length = 0;
+  failWrites = true;
+
+  await assert.rejects(
+    () => service.resolveConflict({ collection: 'docs', id: 'd1', choice: 'local' }),
+    (error) => error.code === 'SYNC_NETWORK_FAILED',
+  );
+
+  assert.notEqual((await service.getStatus()).lastError, null, 'the failure lands in lastError');
+  const changed = bus.seen.filter((event) => event.type === 'sync:changed').at(-1);
+  assert.notEqual(changed, undefined, 'the bus hears about the half-applied resolution');
+  assert.deepEqual(changed.data.conflicts, [{ collection: 'docs', id: 'd1' }], 'the conflict stays open');
+});

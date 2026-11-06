@@ -81,7 +81,7 @@ test('should_delete_local_record_when_remote_side_of_conflict_is_the_deletion', 
     remote: null,
   }, 'docs', 'd1');
 
-  assert.equal(applied, true);
+  assert.equal(applied.applied, true);
   assert.equal(await storage.read('docs', 'd1'), null, 'the deletion must reach the record');
 });
 
@@ -99,7 +99,7 @@ test('should_skip_remote_resolution_when_host_edited_the_record_mid_window', asy
     remote: null,
   }, 'docs', 'd1');
 
-  assert.equal(applied, false, 'the CAS guard must keep the conflict open');
+  assert.equal(applied.applied, false, 'the CAS guard must keep the conflict open');
   const kept = await storage.read('docs', 'd1');
   assert.equal(kept.content, 'ویرایش تازه میزبان', 'the host edit must survive untouched');
   assert.deepEqual(context.snapshot, [], 'no baseline may be pinned on a skipped resolution');
@@ -120,7 +120,8 @@ test('should_adopt_remote_content_when_resolution_chooses_the_remote_side', asyn
     remote: { collection: 'docs', path: 'docs/d1.md', hash: 'abcd1234', rev: 'rev-remote' },
   }, 'docs', 'd1');
 
-  assert.equal(applied, true);
+  assert.equal(applied.applied, true);
+  assert.deepEqual(applied.pulled, [{ collection: 'docs', id: 'd1', path: 'docs/d1.md' }], 'the adoption is reported for the bus');
   const adopted = await storage.read('docs', 'd1');
   assert.equal(adopted.content, 'متن ریموت');
   // The resolution pins its own baseline entry in the persisted snapshot.
@@ -145,7 +146,7 @@ test('should_skip_adoption_when_host_recreated_the_record_mid_window', async () 
     remote: { collection: 'docs', path: 'docs/d1.md', hash: 'abcd1234', rev: 'rev-remote' },
   }, 'docs', 'd1');
 
-  assert.equal(applied, false);
+  assert.equal(applied.applied, false);
   const kept = await storage.read('docs', 'd1');
   assert.equal(kept.content, 'بازآفرینی میزبان');
 });

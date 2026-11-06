@@ -277,6 +277,11 @@ export function createGitAdapter({ repo, branch = DEFAULT_BRANCH, token, fetchFn
       if (response.status === 404) {
         return { ok: true };
       }
+      if (response.status === 409 || response.status === 422) {
+        // Mirrors the write path: a rev mismatch on the planned deletion is
+        // a concurrent change, never a network failure.
+        throw gitError('GIT_REV_MISMATCH', 'Git backend file changed underneath the delete', { repo, path });
+      }
       if (response.status === 401) {
         // Mirrors the write path: an invalidated token mid-round must
         // surface as auth, never as a network failure.

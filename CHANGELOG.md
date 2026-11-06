@@ -4,6 +4,15 @@
 
 Review-fix release. **Breaking:** the `sync:conflicts` event is renamed to `sync:conflicted` to follow the Bonyan past-tense event naming rule — listeners must update.
 
+### Fixed (second review pass)
+
+- A rev mismatch on the planned remote DELETE now maps to `SYNC_CONCURRENT_CHANGE` in both backends (git 409/422, GitLab 400/409) instead of reading as a network failure.
+- `SYNC_REMOTE_INVALID` and `SYNC_PATH_COLLISION` are declared in the manifest for `resolveConflict` (its capture phase can raise both).
+- The resolution CAS guard is fail-closed on storage read failures: the resolution is skipped and the conflict stays open instead of proceeding on unknown state.
+- A freshly re-read remote conflict content is verified against the plan-time hash before adoption; a mid-window change skips the resolution so the user never accepts content they did not preview.
+- A failed `resolveConflict` lands in `lastError` and reaches the bus as a partial `sync:changed` (same pattern as `syncNow`); a half-applied resolution is never unreported.
+- `sync:changed` after a resolution carries the real `pushed`/`pulled` outcomes of that resolution (a local-side resolution writes to the remote).
+
 ### Fixed
 
 - CAS now also guards conflict resolution: `applyRemoteResolution` re-reads the local record and compares it with the plan-time state before the adoption write or the delete-vs-change deletion; a host edit racing the prompt skips the resolution and keeps the conflict open (`remaining` reflects it).

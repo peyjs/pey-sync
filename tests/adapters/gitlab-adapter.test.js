@@ -528,3 +528,37 @@ test('should_map_forbidden_as_auth_when_denied', async () => {
     (error) => error.code === 'GITL_AUTH_FAILED',
   );
 });
+
+test('should_map_auth_and_rev_mismatch_when_write_or_delete_hit_401_or_stale_lock', async () => {
+  const authWrite = setup([
+    projectOk(),
+    branchOk(),
+    { match: (url, options) => options.method === 'PUT' || options.method === 'POST', reply: () => response(401, {}) },
+  ]);
+  await assert.rejects(
+    authWrite.backend.writeFile('a.md', 'text', null),
+    (error) => error.code === 'GITL_AUTH_FAILED',
+  );
+
+  const authDelete = setup([
+    projectOk(),
+    branchOk(),
+    { match: (url, options) => (options.method ?? 'GET') === 'GET', reply: () => response(200, { blob_id: 'b1', last_commit_id: 'c1' }) },
+    { match: (url, options) => options.method === 'DELETE', reply: () => response(401, {}) },
+  ]);
+  await assert.rejects(
+    authDelete.backend.deleteFile('a.md', 'b1'),
+    (error) => error.code === 'GITL_AUTH_FAILED',
+  );
+
+  const staleDelete = setup([
+    projectOk(),
+    branchOk(),
+    { match: (url, options) => (options.method ?? 'GET') === 'GET', reply: () => response(200, { blob_id: 'b1', last_commit_id: 'c1' }) },
+    { match: (url, options) => options.method === 'DELETE', reply: () => response(400, { message: 'invalid' }) },
+  ]);
+  await assert.rejects(
+    staleDelete.backend.deleteFile('a.md', 'b1'),
+    (error) => error.code === 'GITL_REV_MISMATCH',
+  );
+});
