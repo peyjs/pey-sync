@@ -1,6 +1,6 @@
 {
   "name": "pey.sync",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "architecture": "0.11",
   "description": "Generic user-configured sync for pey.storage collections (first backend: git)",
   "type": "infrastructure",
@@ -81,7 +81,7 @@
       ]
     },
     {
-      "name": "sync:conflicts",
+      "name": "sync:conflicted",
       "description": "Published when a run stops on conflicts, for the host prompt.",
       "data": [
         { "name": "conflicts", "type": "object[]" }

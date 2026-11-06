@@ -352,3 +352,53 @@ test('should_resolve_rev_and_tolerate_missing_when_deleted', async () => {
   assert.deepEqual(await missing.backend.deleteFile('a.md'), { ok: true });
   assert.equal(missing.calls.length, 1);
 });
+
+test('should_map_auth_and_rate_limit_when_write_hits_401_or_403_rate', async () => {
+  const auth = setup([
+    repoOk(),
+    branchOk(),
+    { match: (url, options) => options.method === 'PUT', reply: () => response(401, {}) },
+  ]);
+  await assert.rejects(
+    auth.backend.writeFile('docs/a.md', 'text', null),
+    (error) => error.code === 'GIT_AUTH_FAILED',
+  );
+
+  const limited = setup([
+    repoOk(),
+    branchOk(),
+    {
+      match: (url, options) => options.method === 'PUT',
+      reply: () => response(403, {}, { 'x-ratelimit-remaining': '0' }),
+    },
+  ]);
+  await assert.rejects(
+    limited.backend.writeFile('docs/a.md', 'text', null),
+    (error) => error.code === 'GIT_RATE_LIMITED',
+  );
+});
+
+test('should_map_auth_and_rate_limit_when_delete_hits_401_or_403_rate', async () => {
+  const auth = setup([
+    repoOk(),
+    branchOk(),
+    { match: (url, options) => options.method === 'DELETE', reply: () => response(401, {}) },
+  ]);
+  await assert.rejects(
+    auth.backend.deleteFile('docs/a.md', 'rev-1'),
+    (error) => error.code === 'GIT_AUTH_FAILED',
+  );
+
+  const limited = setup([
+    repoOk(),
+    branchOk(),
+    {
+      match: (url, options) => options.method === 'DELETE',
+      reply: () => response(403, {}, { 'x-ratelimit-remaining': '0' }),
+    },
+  ]);
+  await assert.rejects(
+    limited.backend.deleteFile('docs/a.md', 'rev-1'),
+    (error) => error.code === 'GIT_RATE_LIMITED',
+  );
+});

@@ -49,6 +49,14 @@ export async function prepare(prepareContext) {
   const subscribed = prepareContext.events?.subscribe('core:service-unavailable', handleServiceUnavailable);
   unsubscribeUnavailable = typeof subscribed === 'function' ? subscribed : null;
   prepareContext.onDeactivated = () => {
+    if (typeof unsubscribeUnavailable === 'function') {
+      try {
+        unsubscribeUnavailable();
+      } catch {
+        // Deactivation unsubscribe is best effort.
+      }
+      unsubscribeUnavailable = null;
+    }
     state.storage = null;
   };
   prepareContext.onShutdown = async () => {

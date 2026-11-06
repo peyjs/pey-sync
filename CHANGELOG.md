@@ -1,5 +1,23 @@
 # Changelog — pey.sync
 
+## [2.0.0] - 1405-08-15
+
+Review-fix release. **Breaking:** the `sync:conflicts` event is renamed to `sync:conflicted` to follow the Bonyan past-tense event naming rule — listeners must update.
+
+### Fixed
+
+- CAS now also guards conflict resolution: `applyRemoteResolution` re-reads the local record and compares it with the plan-time state before the adoption write or the delete-vs-change deletion; a host edit racing the prompt skips the resolution and keeps the conflict open (`remaining` reflects it).
+- `sync:changed` after `resolveConflict` carries the real open-conflict set (other pending conflicts included) instead of always an empty array.
+- GitHub DELETE responses with 401 map to `GIT_AUTH_FAILED` (and a rate-limited 403 to `GIT_RATE_LIMITED`), mirroring the write path — an invalidated token mid-round no longer reads as a network failure.
+- `npm test` now discovers the whole tree (`node --test`): the five entry-point tests were silently excluded by the old non-recursive glob.
+- `onDeactivated` unsubscribes from `core:service-unavailable` like `onShutdown` already did.
+- `titleOf` fallback is an honest empty string instead of the unexplained `'|'`; the corrupted `matchesExtension` comment now matches the (case-insensitive) code.
+
+### Changed
+
+- The 32-bit FNV-1a change-detection hash and its ~2⁻³² collision trade-off are documented (reference + engine JSDoc).
+- `planSync` and `applyRoundPlan` are split into small decision/apply helpers; per-source test files added for `sync-remote`, `sync-round`, `sync-store` and `adapters/shared`; `tests/sync.test.js` renamed to `tests/entry.test.js`; new tests cover 401/rate-limit on git write/delete, `remaining > 0` resolutions, an end-to-end `SYNC_CONCURRENT_CHANGE`, and shutdown unsubscribe.
+
 ## [1.1.0] - 1405-08-08
 
 Hardening release after an external review (six reproduced defects plus five static risks, each fixed with a regression test).

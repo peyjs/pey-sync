@@ -258,7 +258,7 @@ test('should_push_everything_on_first_sync_when_synced', async () => {
   assert.equal(typeof status.lastSyncAt, 'number');
   assert.equal(status.lastError, null);
   assert.ok(bus.seen.some((event) => event.type === 'sync:changed' && event.data.pushed.length === 1));
-  assert.ok(!bus.seen.some((event) => event.type === 'sync:conflicts'));
+  assert.ok(!bus.seen.some((event) => event.type === 'sync:conflicted'));
 });
 
 test('should_stamp_custom_message_on_this_runs_writes_when_supplied', async () => {
@@ -645,9 +645,8 @@ test('should_stop_on_conflict_when_synced', async () => {
   assert.equal(report.conflicts[0].id, 'd1');
   assert.equal(report.conflicts[0].local.content, 'نسخه تازه من');
   assert.equal(report.conflicts[0].remote.content, 'نسخه طرف');
-  report.conflicts[0].title === null || report.conflicts[0].title === undefined;
   assert.ok(report.conflicts[0].title === undefined || typeof report.conflicts[0].title === 'string');
-  assert.ok(bus.seen.some((event) => event.type === 'sync:conflicts'));
+  assert.ok(bus.seen.some((event) => event.type === 'sync:conflicted'));
   assert.ok(await storage.read('docs', 'd1'), 'expected nothing deleted mid-conflict');
 });
 
@@ -1000,7 +999,7 @@ test('should_map_midrun_network_failure_and_report_when_synced', async () => {
   assert.equal(error?.code, 'SYNC_NETWORK_FAILED');
   assert.equal((await service.getStatus()).lastError?.code, 'SYNC_NETWORK_FAILED');
   assert.ok(bus.seen.some((event) => event.type === 'sync:changed'));
-  assert.ok(!bus.seen.some((event) => event.type === 'sync:conflicts'));
+  assert.ok(!bus.seen.some((event) => event.type === 'sync:conflicted'));
 });
 
 test('should_map_midrun_rate_limit_when_synced', async () => {
@@ -1083,4 +1082,95 @@ test('should_resume_after_midrun_failure_when_synced', async () => {
   assert.ok(remote.files.has('اول.md'));
   assert.ok(remote.files.has('دوم.md'));
   assert.deepEqual(await service.hasPendingChanges({ scope: SCOPE }), { pending: false });
+});
+
+test('should_keep_clock_and_report_remaining_when_one_conflict_of_several_is_resolved', async () => {
+  const { service, storage, remote, events } = setup({
+    storageData: {
+      docs: [
+        { id: 'd1', title: 'یادداشت یک', content: 'نسخه من یک', folderId: null, updatedAt: 30 },
+        { id: 'd2', title: 'یادداشت دو', content: 'نسخه من دو', folderId: null, updatedAt: 30 },
+      ],
+    },
+  });
+  await configure(service);
+  await service.syncNow({ scope: SCOPE });
+  remote.files.set('یادداشت یک.md', { content: encode('نسخه طرف یک'), rev: 'd2' });
+  remote.files.set('یادداشت دو.md', { content: encode('نسخه طرف دو'), rev: 'd3' });
+  await storage.write('docs', { id: 'd1', title: 'یادداشت یک', content: 'نسخه تازه یک', folderId: null, updatedAt: 40 });
+  await storage.write('docs', { id: 'd2', title: 'یادداشت دو', content: 'نسخه تازه دو', folderId: null, updatedAt: 40 });
+  await service.syncNow({ scope: SCOPE });
+  const stampedAt = (await service.getStatus()).lastSyncAt;
+  assert.equal(typeof stampedAt, 'number', 'the first clean round stamped the clock');
+  events.seen.length = 0;
+
+  const first = await service.resolveConflict({ collection: 'docs', id: 'd1', choice: 'local' });
+
+  assert.equal(first.remaining, 1, 'the other conflict must stay pending');
+  assert.equal((await service.getStatus()).lastSyncAt, stampedAt, 'the clock must not advance while conflicts remain');
+  const changed = events.seen.find((event) => event.type === 'sync:changed');
+  assert.deepEqual(changed.data.conflicts, [{ collection: 'docs', id: 'd2' }], 'the event must carry the open conflict');
+
+  const second = await service.resolveConflict({ collection: 'docs', id: 'd2', choice: 'local' });
+  assert.equal(second.remaining, 0);
+  assert.ok((await service.getStatus()).lastSyncAt > stampedAt, 'the clock advances when the last conflict clears');
+});
+
+test('should_keep_conflict_open_when_host_edits_the_record_mid_resolution', async () => {
+  const { service, storage, remote } = setup({
+    storageData: {
+      docs: [{ id: 'd1', title: 'یادداشت', content: 'نسخه من', folderId: null, updatedAt: 30 }],
+    },
+  });
+  await configure(service);
+  await service.syncNow({ scope: SCOPE });
+  remote.files.set('یادداشت.md', { content: encode('نسخه طرف'), rev: 'd2' });
+  await storage.write('docs', { id: 'd1', title: 'یادداشت', content: 'نسخه تازه من', folderId: null, updatedAt: 40 });
+  await service.syncNow({ scope: SCOPE });
+
+  // The CAS re-read inside the resolution sees a newer host edit than the
+  // state the plan was captured on (collectLocal's query view).
+  const innerRead = storage.read.bind(storage);
+  storage.read = async (collection, key) => {
+    const record = await innerRead(collection, key);
+    if (collection === 'docs' && key === 'd1' && record) {
+      return { ...record, content: 'ویرایش هم‌زمان میزبان', updatedAt: 50 };
+    }
+    return record;
+  };
+
+  const resolved = await service.resolveConflict({ collection: 'docs', id: 'd1', choice: 'remote' });
+
+  assert.equal(resolved.remaining, 1, 'the CAS guard must keep the conflict open');
+  assert.equal((await innerRead('docs', 'd1')).content, 'نسخه تازه من', 'the plan-time record must survive untouched');
+  assert.equal(decode(remote.files.get('یادداشت.md').content), 'نسخه طرف', 'the remote side must stay untouched');
+});
+
+test('should_report_concurrent_change_when_remote_moves_mid_round', async () => {
+  const storage = memoryStorage({
+    docs: [{ id: 'd1', title: 'یادداشت', content: 'نسخه اول', folderId: null, updatedAt: 30 }],
+  });
+  const remote = fakeGitHub({});
+  const innerFetch = remote.fetchFn;
+  let stolen = false;
+  const fetchFn = async (url, options = {}) => {
+    // Another client commits to the same file right before our PUT lands.
+    const hit = remote.files.get('یادداشت.md');
+    if (!stolen && hit && (options.method ?? 'GET') === 'PUT' && url.includes('/contents/')) {
+      stolen = true;
+      hit.rev = 'rev-stolen';
+    }
+    return innerFetch(url, options);
+  };
+  const service = createService({ storage, events: events(), fetchFn });
+  await configure(service);
+  // First clean round pins the baseline; the second round plans a push of
+  // the edited record against the stolen revision.
+  await service.syncNow({ scope: SCOPE });
+  await storage.write('docs', { id: 'd1', title: 'یادداشت', content: 'نسخه دوم', folderId: null, updatedAt: 40 });
+
+  await assert.rejects(
+    () => service.syncNow({ scope: SCOPE }),
+    (error) => error.code === 'SYNC_CONCURRENT_CHANGE',
+  );
 });

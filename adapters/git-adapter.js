@@ -110,7 +110,7 @@ export function createGitAdapter({ repo, branch = DEFAULT_BRANCH, token, fetchFn
     return response.status === 403 && response.headers?.get?.('x-ratelimit-remaining') === '0';
   }
 
-  async function contentsUrl(path, forWrite = false) {
+  function contentsUrl(path, forWrite = false) {
     const encoded = String(path ?? '')
       .split('/')
       .map((segment) => encodeURIComponent(segment))
@@ -119,7 +119,7 @@ export function createGitAdapter({ repo, branch = DEFAULT_BRANCH, token, fetchFn
   }
 
   async function collectDir(path, out, isRoot = false) {
-    const response = await request(await contentsUrl(path));
+    const response = await request(contentsUrl(path));
     if (response.status === 404) {
       // A missing subdirectory is an empty tree; a missing ROOT listing
       // means the repository or branch is gone — never "everything was
@@ -155,7 +155,7 @@ export function createGitAdapter({ repo, branch = DEFAULT_BRANCH, token, fetchFn
   }
 
   async function readOne(path) {
-    const response = await request(await contentsUrl(path));
+    const response = await request(contentsUrl(path));
     if (response.status === 404) {
       return null;
     }
@@ -236,7 +236,7 @@ export function createGitAdapter({ repo, branch = DEFAULT_BRANCH, token, fetchFn
       if (rev !== null && rev !== undefined) {
         body.sha = rev;
       }
-      const response = await request(await contentsUrl(path, true), {
+      const response = await request(contentsUrl(path, true), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -269,13 +269,21 @@ export function createGitAdapter({ repo, branch = DEFAULT_BRANCH, token, fetchFn
         }
         sha = current.rev;
       }
-      const response = await request(await contentsUrl(path, true), {
+      const response = await request(contentsUrl(path, true), {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: commitMessageOf(options, `pey.sync delete ${path}`), sha, branch }),
       });
       if (response.status === 404) {
         return { ok: true };
+      }
+      if (response.status === 401) {
+        // Mirrors the write path: an invalidated token mid-round must
+        // surface as auth, never as a network failure.
+        throw gitError('GIT_AUTH_FAILED', 'Git backend rejected the token', { repo });
+      }
+      if (rateLimited(response)) {
+        throw gitError('GIT_RATE_LIMITED', 'Git backend rate limit exhausted', { repo });
       }
       if (response.status === 403) {
         throw accessDenied({ repo, path });
