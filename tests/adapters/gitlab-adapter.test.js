@@ -360,7 +360,7 @@ test('should_refuse_write_when_blob_moved_since_sync', async () => {
   assert.equal(calls.filter((call) => call.method === 'PUT').length, 0, 'no write fires on a moved blob');
 });
 
-test('should_treat_gone_as_conflict_on_locked_write', async () => {
+test('should_treat_gone_as_conflict_when_a_locked_write_reports_it', async () => {
   const { backend } = setup([fileRoute(() => response(404, {}))]);
   await assert.rejects(
     backend.writeFile('parsinegar/a.md', 'text', 'old-blob'),
@@ -478,7 +478,7 @@ test('should_delete_missing_file_silently_when_already_gone', async () => {
 });
 
 
-test('should_not_follow_pagination_outside_the_instance', async () => {
+test('should_not_follow_pagination_when_links_point_outside_the_instance', async () => {
   // S2: the token rides every pagination hop, so a Link header pointing
   // somewhere else must be refused, never followed.
   const { backend, calls } = setup([
@@ -494,7 +494,7 @@ test('should_not_follow_pagination_outside_the_instance', async () => {
   assert.ok(!calls.some((call) => call.url.includes('evil.example')), 'expected the foreign pagination target never fetched');
 });
 
-test('should_stop_pagination_that_never_terminates', async () => {
+test('should_stop_pagination_when_it_never_terminates', async () => {
   const tree = 'https://gitlab.com/api/v4/projects/user%2Fnotes/repository/tree?recursive=true&ref=main&pagination=keyset&per_page=100&page=';
   let page = 0;
   const { backend } = setup([

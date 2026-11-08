@@ -31,7 +31,7 @@ test('should_default_fields_when_minimal', () => {
   });
 });
 
-test('should_default_markdown_base_path_to_root_and_honour_explicit_ones', () => {
+test('should_default_markdown_base_path_to_root_when_base_path_is_absent_and_honour_explicit_ones', () => {
   const [markdown, tagged, meta] = normalizeScope({
     collections: [
       { collection: 'notes', serializer: 'markdown' },
@@ -162,7 +162,7 @@ test('should_hash_remote_files_on_the_local_basis_when_scoping', () => {
   assert.equal(remoteHash(configs, 'meta', 'not-json'), null);
 });
 
-test('should_reject_prototype_keys_as_serializer_names', () => {
+test('should_reject_prototype_keys_when_serializer_names_are_resolved', () => {
   assert.throws(
     () => normalizeScope({ collections: [{ collection: 'docs', serializer: 'constructor' }] }),
     (error) => error?.code === 'SYNC_INVALID_CONFIG',
@@ -171,7 +171,7 @@ test('should_reject_prototype_keys_as_serializer_names', () => {
   assert.equal(serializerFor('json')?.extension, 'json');
 });
 
-test('should_round_trip_base_paths_for_both_serializers', () => {
+test('should_round_trip_base_paths_when_both_serializers_normalize_them', () => {
   const configs = normalizeScope({ collections: [
     { collection: 'docs', serializer: 'markdown', basePath: 'docs' },
     { collection: 'notes', serializer: 'json', basePath: 'data/notes' },
@@ -186,7 +186,7 @@ test('should_round_trip_base_paths_for_both_serializers', () => {
   assert.equal(pathEncodedId(configs[1], json), 'n1');
 });
 
-test('should_reject_base_paths_with_traversal_or_empty_segments', () => {
+test('should_reject_base_paths_when_they_carry_traversal_or_empty_segments', () => {
   for (const basePath of ['..', 'docs/../evil', 'a//b']) {
     assert.throws(
       () => normalizeScope({ collections: [{ collection: 'docs', serializer: 'markdown', basePath }] }),

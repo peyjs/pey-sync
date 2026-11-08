@@ -294,7 +294,7 @@ test('should_keep_automatic_messages_when_no_custom_message_is_supplied', async 
   assert.deepEqual(putBodies.map((body) => body.message), ['pey.sync write یادداشت.md']);
 });
 
-test('should_cap_long_custom_messages_instead_of_failing', async () => {
+test('should_cap_long_custom_messages_instead_of_failing_when_an_error_message_exceeds_the_limit', async () => {
   const { service, remote } = setup({
     storageData: {
       docs: [{ id: 'd1', title: 'یادداشت', content: 'سلام', folderId: null, updatedAt: 20 }],
@@ -835,7 +835,7 @@ test('should_keep_other_records_dirty_when_a_conflict_resolves', async () => {
   assert.deepEqual(pending, { pending: true }, 'the unrelated edit must stay dirty after the resolution');
 });
 
-test('should_record_finalize_failures_as_run_errors', async () => {
+test('should_record_finalize_failures_as_run_errors_when_the_round_cannot_settle', async () => {
   // F6: a rejection inside finalizeRound must ride the mapped run-error
   // path (recorded + published), not escape raw past the catch.
   const base = memoryStorage({
@@ -1144,6 +1144,90 @@ test('should_keep_conflict_open_when_host_edits_the_record_mid_resolution', asyn
   assert.equal(resolved.remaining, 1, 'the CAS guard must keep the conflict open');
   assert.equal((await innerRead('docs', 'd1')).content, 'نسخه تازه من', 'the plan-time record must survive untouched');
   assert.equal(decode(remote.files.get('یادداشت.md').content), 'نسخه طرف', 'the remote side must stay untouched');
+});
+
+test('should_keep_the_conflict_open_when_the_host_edits_the_record_before_the_local_resolution', async () => {
+  // The local choice writes the remote file too — it runs the same CAS the
+  // remote choice applies, or a host edit racing the resolution would be
+  // silently overwritten on the backend.
+  const { service, storage, remote } = setup({
+    storageData: {
+      docs: [{ id: 'd1', title: 'یادداشت', content: 'نسخه من', folderId: null, updatedAt: 30 }],
+    },
+  });
+  await configure(service);
+  await service.syncNow({ scope: SCOPE });
+  remote.files.set('یادداشت.md', { content: encode('نسخه طرف'), rev: 'd2' });
+  await storage.write('docs', { id: 'd1', title: 'یادداشت', content: 'نسخه تازه من', folderId: null, updatedAt: 40 });
+  await service.syncNow({ scope: SCOPE });
+
+  const innerRead = storage.read.bind(storage);
+  storage.read = async (collection, key) => {
+    const record = await innerRead(collection, key);
+    if (collection === 'docs' && key === 'd1' && record) {
+      return { ...record, content: 'ویرایش هم‌زمان میزبان', updatedAt: 50 };
+    }
+    return record;
+  };
+
+  const resolved = await service.resolveConflict({ collection: 'docs', id: 'd1', choice: 'local' });
+
+  assert.equal(resolved.remaining, 1, 'the CAS guard must keep the conflict open');
+  assert.equal((await innerRead('docs', 'd1')).content, 'نسخه تازه من', 'the plan-time record must survive untouched');
+  assert.equal(decode(remote.files.get('یادداشت.md').content), 'نسخه طرف', 'the remote file must not carry the stale plan content');
+});
+
+test('should_keep_the_conflict_open_when_the_chosen_remote_file_cannot_shape_into_a_record', async () => {
+  // A remote file whose payload id disagrees with its path is not
+  // representable locally: resolving "remote" must adopt nothing and pin
+  // no baseline — otherwise the next round would invert the user's choice
+  // (overwrite or delete the file they explicitly kept).
+  const { service, storage, remote } = setup({
+    storageData: {
+      notes: [{ key: 'n1', text: 'نسخه من', mtime: 10 }],
+    },
+  });
+  await configure(service);
+  await service.syncNow({ scope: JSON_SCOPE });
+  remote.files.set('notes/n1.json', {
+    content: Buffer.from(JSON.stringify({ key: 'n2', text: 'نسخه طرف', mtime: 20 })).toString('base64'),
+    rev: 'r2',
+  });
+  await storage.write('notes', { key: 'n1', text: 'نسخه تازه من', mtime: 40 });
+  const report = await service.syncNow({ scope: JSON_SCOPE });
+  assert.equal(report.completed, false);
+
+  const resolved = await service.resolveConflict({ collection: 'notes', id: 'n1', choice: 'remote' });
+
+  assert.equal(resolved.remaining, 1, 'the unrepresentable remote file keeps the conflict open');
+  assert.equal((await storage.read('notes', 'n1')).text, 'نسخه تازه من', 'the local record was not touched');
+  await service.syncNow({ scope: JSON_SCOPE });
+  const kept = JSON.parse(Buffer.from(remote.files.get('notes/n1.json').content, 'base64').toString('utf8'));
+  assert.equal(kept.text, 'نسخه طرف', 'the next round must not push the local content over the chosen remote file');
+});
+
+test('should_publish_changed_items_without_path_when_a_resolution_applies', async () => {
+  // The sync:changed contract documents `{ collection, id }` items; the
+  // internal path bookkeeping of resolution outcomes stays internal.
+  const { service, storage, remote, events: bus } = setup({
+    storageData: {
+      docs: [{ id: 'd1', title: 'یادداشت', content: 'نسخه من', folderId: null, updatedAt: 30 }],
+    },
+  });
+  await configure(service);
+  await service.syncNow({ scope: SCOPE });
+  remote.files.set('یادداشت.md', { content: encode('نسخه طرف'), rev: 'd2' });
+  await storage.write('docs', { id: 'd1', title: 'یادداشت', content: 'نسخه تازه من', folderId: null, updatedAt: 40 });
+  await service.syncNow({ scope: SCOPE });
+  bus.seen.length = 0;
+
+  await service.resolveConflict({ collection: 'docs', id: 'd1', choice: 'local' });
+
+  const changed = bus.seen.filter((event) => event.type === 'sync:changed').at(-1);
+  assert.notEqual(changed, undefined);
+  for (const item of [...changed.data.pushed, ...changed.data.pulled]) {
+    assert.deepEqual(Object.keys(item).sort(), ['collection', 'id'], 'event items carry exactly the documented shape');
+  }
 });
 
 test('should_report_concurrent_change_when_remote_moves_mid_round', async () => {

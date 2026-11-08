@@ -69,7 +69,7 @@ test('should_merge_round_outcomes_into_the_baseline_when_completed', async () =>
   assert.equal(typeof saved.lastSyncAt, 'number');
 });
 
-test('should_stamp_synced_at_without_touching_the_baseline', async () => {
+test('should_stamp_synced_at_without_touching_the_baseline_when_the_round_settles', async () => {
   const storage = memoryStorage();
   await storage.write('sync_state', {
     id: 'active',

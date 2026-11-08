@@ -73,7 +73,7 @@ test('should_read_legacy_manifest_records_when_one_is_present', async () => {
   assert.equal(listing.entries.some((entry) => entry.path === 'sync-manifest.json'), false);
 });
 
-test('should_ignore_corrupt_or_wrong_version_manifest_instead_of_failing', async () => {
+test('should_ignore_the_manifest_instead_of_failing_when_it_is_corrupt_or_of_a_wrong_version', async () => {
   const configs = normalizeScope(SCOPE);
 
   const corrupt = await readRemoteListing(fakeAdapter({ manifest: '{not json' }), configs, new Map(), ['md']);
@@ -90,7 +90,7 @@ test('should_ignore_corrupt_or_wrong_version_manifest_instead_of_failing', async
   assert.equal(missing.legacyManifestRecords, null);
 });
 
-test('should_hash_remote_file_on_the_local_comparable_basis', async () => {
+test('should_hash_the_remote_file_on_the_local_comparable_basis_when_collecting_the_round', async () => {
   const configs = normalizeScope(SCOPE);
   const adapter = fakeAdapter({ files: { 'docs/a.md': '# سلام' } });
 

@@ -77,7 +77,7 @@ test('should_rest_when_both_sides_match_the_snapshot', () => {
   assert.deepEqual(plan.conflicts, []);
 });
 
-test('should_push_one_sided_local_change_and_carry_old_path_delete_on_rename', () => {
+test('should_push_one_sided_local_change_and_carry_the_old_path_delete_when_a_record_is_renamed', () => {
   const edited = planSync([snap()], [local({ hash: 'edited' })], [remote({ hash: 'hash-a' })]);
   assert.deepEqual(edited.push.map((item) => item.hash), ['edited']);
   assert.deepEqual(edited.pull, []);
@@ -90,7 +90,7 @@ test('should_push_one_sided_local_change_and_carry_old_path_delete_on_rename', (
   assert.deepEqual(renamed.deleteRemote, [{ collection: 'docs', id: 'a', path: 'old.md', rev: 'r-old' }]);
 });
 
-test('should_pull_one_sided_remote_change', () => {
+test('should_pull_one_sided_remote_change_when_the_local_record_is_unchanged', () => {
   const plan = planSync(
     [snap({ hash: 'old' })],
     [local({ hash: 'old' })],
@@ -206,7 +206,7 @@ test('should_conflict_when_a_foreign_snapshot_owner_vanished', () => {
   assert.equal(plan.conflicts[0].id, 'new');
 });
 
-test('should_pull_minted_owners_for_new_remote_files', () => {
+test('should_pull_minted_owners_when_new_remote_files_arrive', () => {
   const plan = planSync([], [], [remote({ id: null, path: 'سند.md' })]);
   assert.deepEqual(plan.pull, [{ collection: 'docs', id: null, path: 'سند.md', hash: 'hash-a', rev: 'rev-a' }]);
   const jsonPlan = planSync([], [], [remote({ id: 'meta-1', collection: 'meta', path: 'meta/meta-1.json' })]);

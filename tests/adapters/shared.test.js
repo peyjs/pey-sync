@@ -27,7 +27,7 @@ test('should_decode_wrapped_base64_when_provider_folds_lines', () => {
   assert.equal(decodeContent(wrapped), 'سلام دنیا');
 });
 
-test('should_keep_the_request_deadline_at_thirty_seconds', () => {
+test('should_keep_the_request_deadline_at_thirty_seconds_when_no_override_is_configured', () => {
   // The timeout is a contract with the UI: long enough for slow networks,
   // short enough that a stalled request cannot hang a sync round forever.
   assert.equal(REQUEST_TIMEOUT_MS, 30000);

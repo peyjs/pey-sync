@@ -1,5 +1,20 @@
 # Changelog — pey.sync
 
+## [2.0.1] - 1405-08-17
+
+Round-3 review fixes. No contract change; `sync:changed` items now match their documented shape exactly.
+
+### Fixed
+
+- Resolving a conflict with the **remote** choice no longer pins the snapshot when the remote content is readable but cannot shape into a local record (e.g. a JSON file whose payload id disagrees with its path): the resolution is now reported as not applied and the conflict stays open. Previously the baseline was pinned anyway, so the next round saw the local record as "changed" again and silently overwrote — or deleted — the very file the user had chosen to keep (regression test added).
+- The **local** choice of a conflict resolution now applies the same CAS guard as the remote choice: a host edit racing the plan-to-apply window keeps the conflict open instead of being silently overwritten on the backend (regression test added).
+- `sync:changed` items published by `resolveConflict` carry exactly the documented `{ collection, id }` shape — the internal `path` field is no longer leaked (test added).
+
+### Changed
+
+- JSDoc of `applyLocalResolution` / `applyRemoteResolution` updated to the real `{ applied, pushed, pulled }` outcomes; 16 older test names moved to the `should_..._when_...` convention; README version badge and backend list (git, gitlab) brought up to date.
+
+
 ## [2.0.0] - 1405-08-15
 
 Review-fix release. **Breaking:** the `sync:conflicts` event is renamed to `sync:conflicted` to follow the Bonyan past-tense event naming rule — listeners must update.
