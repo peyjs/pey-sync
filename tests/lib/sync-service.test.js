@@ -1206,6 +1206,43 @@ test('should_keep_the_conflict_open_when_the_chosen_remote_file_cannot_shape_int
   assert.equal(kept.text, 'نسخه طرف', 'the next round must not push the local content over the chosen remote file');
 });
 
+test('should_fail_the_round_when_the_git_directory_listing_hits_the_truncation_limit', async () => {
+  // GitHub's Contents API silently truncates a listing at 1,000 entries:
+  // an incomplete listing must never drive a round — paths missing from it
+  // would read as "remotely deleted" and destroy local edits.
+  const files = {};
+  for (let index = 0; index < 1000; index += 1) {
+    files[`notes/n${index}.json`] = { content: Buffer.from(JSON.stringify({ key: `n${index}`, text: `متن ${index}`, mtime: 10 })).toString('base64'), rev: `r${index}` };
+  }
+  const { service } = setup({ files });
+
+  await configure(service);
+  const report = await service.syncNow({ scope: JSON_SCOPE }).catch((caught) => caught);
+
+  assert.equal(report.code, 'SYNC_REMOTE_INVALID');
+  assert.equal(report.detail?.adapterCode, 'GIT_DIRECTORY_TRUNCATED');
+});
+
+test('should_report_the_real_remote_content_when_a_takeover_conflict_uses_the_rev_shortcut', async () => {
+  // The rev shortcut leaves a takeover conflict's remote file unread; the
+  // conflict report must still carry the real remote content — an empty
+  // string would present a non-empty file as "remotely empty" and steer
+  // the user's choice.
+  const { service, storage } = setup({
+    storageData: { docs: [{ id: 'a', title: 'یادداشت', content: 'نسخه اولیه', folderId: null, updatedAt: 30 }] },
+  });
+  await configure(service);
+  const first = await service.syncNow({ scope: SCOPE });
+  assert.equal(first.completed, true);
+
+  await storage.delete('docs', 'a');
+  await storage.write('docs', { id: 'b', title: 'یادداشت', content: 'بازنویسی', folderId: null, updatedAt: 40 });
+
+  const report = await service.syncNow({ scope: SCOPE });
+  assert.equal(report.completed, false);
+  assert.equal(report.conflicts[0].remote.content, 'نسخه اولیه', 'the host sees the content it is choosing about');
+});
+
 test('should_keep_the_conflict_open_when_the_local_deletion_is_recreated_before_the_local_resolution', async () => {
   // The CAS guard covers the DELETION branch of the local choice too: a
   // host re-creation mid-window means the deletion the user chose no
@@ -1302,6 +1339,46 @@ test('should_publish_changed_items_without_path_when_a_resolution_applies', asyn
   for (const item of [...changed.data.pushed, ...changed.data.pulled]) {
     assert.deepEqual(Object.keys(item).sort(), ['collection', 'id'], 'event items carry exactly the documented shape');
   }
+});
+
+test('should_close_a_vanished_remote_conflict_by_the_takeover_rule_when_the_file_stays_gone', async () => {
+  // Documented behavior of the skipped "remote" resolution: the conflict is
+  // reported open, and when the remote file never comes back the next round
+  // treats the path as local-only and closes it by the regular takeover
+  // push rule — the remote state itself superseding the stale choice.
+  const storage = memoryStorage({
+    docs: [{ id: 'a', title: 'یادداشت', content: 'نسخه اولیه', folderId: null, updatedAt: 30 }],
+  });
+  const remote = fakeGitHub({});
+  const innerFetch = remote.fetchFn;
+  let vanishOnRead = false;
+  const fetchFn = async (url, options = {}) => {
+    if (vanishOnRead && (options.method ?? 'GET') === 'GET' && url.includes('/contents/')) {
+      const path = decodeURIComponent((url.match(/\/contents\/?(.*?)(\?.*)?$/) ?? [])[1] ?? '');
+      if (path === 'یادداشت.md') {
+        vanishOnRead = false;
+        remote.files.delete('یادداشت.md');
+      }
+    }
+    return innerFetch(url, options);
+  };
+  const service = createService({ storage, events: events(), fetchFn });
+  await configure(service);
+  await service.syncNow({ scope: SCOPE });
+
+  await storage.delete('docs', 'a');
+  await storage.write('docs', { id: 'b', title: 'یادداشت', content: 'بازنویسی', folderId: null, updatedAt: 40 });
+  const report = await service.syncNow({ scope: SCOPE });
+  assert.equal(report.completed, false);
+  assert.deepEqual(report.conflicts.map((item) => item.id), ['b']);
+
+  vanishOnRead = true;
+  const resolved = await service.resolveConflict({ collection: 'docs', id: 'b', choice: 'remote' });
+  assert.equal(resolved.remaining, 1, 'the vanished remote file keeps the conflict open');
+
+  const done = await service.syncNow({ scope: SCOPE });
+  assert.equal(done.completed, true, 'the next round closes the conflict by the takeover rule');
+  assert.deepEqual(done.pushed.map((item) => item.id), ['b']);
 });
 
 test('should_report_concurrent_change_when_remote_moves_mid_round', async () => {

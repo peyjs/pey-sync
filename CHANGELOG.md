@@ -2,10 +2,13 @@
 
 ## [2.0.1] - 1405-08-17
 
-Round-3 review fixes. No contract change; `sync:changed` items now match their documented shape exactly.
+Round-3, round-4 and round-5 review fixes (all unpublished; one release). No contract change; `sync:changed` items now match their documented shape exactly.
 
 ### Fixed
 
+- **The git backend now fails loudly when a directory listing hits GitHub's silent 1,000-entry truncation limit** (`GIT_DIRECTORY_TRUNCATED`, mapped to `SYNC_REMOTE_INVALID`): an incomplete listing previously read as "remotely deleted" for everything past the cutoff and would have silently destroyed local edits. Documented in the reference next to the gitlab adapter's pagination cap (regression test added).
+- A takeover conflict whose remote file was skipped by the rev shortcut now reports the REAL remote content to the host — an empty string made a non-empty file look "remotely empty" and steered the user's choice (regression test added).
+- The skipped "remote" resolution of a conflict whose remote file vanished is documented honestly: the conflict stays open, and a file that never comes back is closed by the next round's regular takeover push rule (comment, reference and regression test aligned).
 - The CAS guard of the **local** choice now covers its deletion branch too: a host re-creation racing the resolution window keeps the conflict open instead of letting the remote file be deleted on the strength of a deletion that no longer exists (regression test added).
 - A remote file that vanishes at resolve time in a takeover conflict no longer half-applies the "remote" choice (empty baseline pin while the local record survives — the local content would have overwritten the remote deletion next round): the conflict stays open like every other unrepresentable outcome (regression test added).
 - Resolving a conflict with the **remote** choice no longer pins the snapshot when the remote content is readable but cannot shape into a local record (e.g. a JSON file whose payload id disagrees with its path): the resolution is now reported as not applied and the conflict stays open. Previously the baseline was pinned anyway, so the next round saw the local record as "changed" again and silently overwrote — or deleted — the very file the user had chosen to keep (regression test added).

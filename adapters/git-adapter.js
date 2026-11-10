@@ -14,6 +14,11 @@ const DEFAULT_BRANCH = 'main';
  * backends (e.g. GitLab) register their own descriptor without touching
  * the engine; see adapters/README.md.
  */
+// GitHub's Contents API silently truncates a directory listing at this
+// many entries (documented limit): reaching it means the listing is
+// incomplete and must never be trusted for deletion decisions.
+const GIT_LISTING_TRUNCATION_LIMIT = 1000;
+
 export const gitAdapterDescriptor = {
   kind: 'git',
   create: (params, fetchFn) => createGitAdapter({ ...params, fetchFn }),
@@ -25,6 +30,7 @@ export const gitAdapterDescriptor = {
     GIT_NETWORK_FAILED: 'SYNC_NETWORK_FAILED',
     GIT_REQUEST_FAILED: 'SYNC_NETWORK_FAILED',
     GIT_INVALID_CONFIG: 'SYNC_INVALID_CONFIG',
+    GIT_DIRECTORY_TRUNCATED: 'SYNC_REMOTE_INVALID',
   },
   revMismatchCode: 'GIT_REV_MISMATCH',
 };
@@ -144,6 +150,20 @@ export function createGitAdapter({ repo, branch = DEFAULT_BRANCH, token, fetchFn
     }
     const payload = await response.json();
     const entries = Array.isArray(payload) ? payload : [payload];
+    if (entries.length >= GIT_LISTING_TRUNCATION_LIMIT) {
+      // GitHub's Contents API silently truncates a directory listing at
+      // 1,000 entries — no error, no continuation page. An incomplete
+      // listing can never drive a round: paths missing from it would read
+      // as "remotely deleted" and the engine would destroy local edits.
+      // Failing loudly (like the gitlab adapter's pagination cap) is the
+      // only safe answer; the user shrinks the folder scope or the backend
+      // migrates to the Trees API.
+      throw gitError(
+        'GIT_DIRECTORY_TRUNCATED',
+        'The directory listing hit the backend truncation limit and cannot drive a sync',
+        { repo, path },
+      );
+    }
     for (const item of entries) {
       if (item?.type === 'file') {
         out.push({ path: item.path, rev: item.sha ?? null });
