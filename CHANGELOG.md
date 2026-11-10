@@ -6,6 +6,8 @@ Round-3 review fixes. No contract change; `sync:changed` items now match their d
 
 ### Fixed
 
+- The CAS guard of the **local** choice now covers its deletion branch too: a host re-creation racing the resolution window keeps the conflict open instead of letting the remote file be deleted on the strength of a deletion that no longer exists (regression test added).
+- A remote file that vanishes at resolve time in a takeover conflict no longer half-applies the "remote" choice (empty baseline pin while the local record survives — the local content would have overwritten the remote deletion next round): the conflict stays open like every other unrepresentable outcome (regression test added).
 - Resolving a conflict with the **remote** choice no longer pins the snapshot when the remote content is readable but cannot shape into a local record (e.g. a JSON file whose payload id disagrees with its path): the resolution is now reported as not applied and the conflict stays open. Previously the baseline was pinned anyway, so the next round saw the local record as "changed" again and silently overwrote — or deleted — the very file the user had chosen to keep (regression test added).
 - The **local** choice of a conflict resolution now applies the same CAS guard as the remote choice: a host edit racing the plan-to-apply window keeps the conflict open instead of being silently overwritten on the backend (regression test added).
 - `sync:changed` items published by `resolveConflict` carry exactly the documented `{ collection, id }` shape — the internal `path` field is no longer leaked (test added).

@@ -1206,6 +1206,80 @@ test('should_keep_the_conflict_open_when_the_chosen_remote_file_cannot_shape_int
   assert.equal(kept.text, 'نسخه طرف', 'the next round must not push the local content over the chosen remote file');
 });
 
+test('should_keep_the_conflict_open_when_the_local_deletion_is_recreated_before_the_local_resolution', async () => {
+  // The CAS guard covers the DELETION branch of the local choice too: a
+  // host re-creation mid-window means the deletion the user chose no
+  // longer exists — the remote file must not be deleted on its strength.
+  const { service, storage, remote } = setup({
+    storageData: { docs: [{ id: 'd1', title: 'یادداشت', content: 'نسخه من', folderId: null, updatedAt: 30 }] },
+  });
+  await configure(service);
+  await service.syncNow({ scope: SCOPE });
+  remote.files.set('یادداشت.md', { content: encode('نسخه طرف'), rev: 'd2' });
+  await storage.delete('docs', 'd1');
+  const report = await service.syncNow({ scope: SCOPE });
+  assert.equal(report.completed, false);
+  assert.deepEqual(report.conflicts.map((item) => item.id), ['d1']);
+
+  const innerRead = storage.read.bind(storage);
+  storage.read = async (collection, key) => {
+    const record = await innerRead(collection, key);
+    if (collection === 'docs' && key === 'd1') {
+      return { id: 'd1', title: 'یادداشت', content: 'بازآفرینی میزبان', folderId: null, updatedAt: 50 };
+    }
+    return record;
+  };
+
+  const resolved = await service.resolveConflict({ collection: 'docs', id: 'd1', choice: 'local' });
+
+  assert.equal(resolved.remaining, 1, 'the CAS guard keeps the conflict open');
+  assert.equal(decode(remote.files.get('یادداشت.md').content), 'نسخه طرف', 'the remote file was not deleted on a stale deletion');
+});
+
+test('should_keep_the_conflict_open_when_the_remote_file_vanishes_before_a_takeover_resolution', async () => {
+  // Takeover conflict: the snapshot owner vanished locally, a new record
+  // occupies the path, and the remote file kept its revision (so its
+  // content never entered the round). If the file then vanishes before the
+  // "remote" choice applies, the resolution must not half-apply — pinning
+  // no baseline while the local record survives would push the local
+  // content over the remote deletion next round.
+  const storage = memoryStorage({
+    docs: [{ id: 'a', title: 'یادداشت', content: 'نسخه اولیه', folderId: null, updatedAt: 30 }],
+  });
+  const remote = fakeGitHub({});
+  const innerFetch = remote.fetchFn;
+  let vanishOnRead = false;
+  const fetchFn = async (url, options = {}) => {
+    // The vanish must land between the resolution's own capture and its
+    // fresh read — deleting the file earlier would dissolve the conflict
+    // before it is even offered.
+    if (vanishOnRead && (options.method ?? 'GET') === 'GET' && url.includes('/contents/')) {
+      const path = decodeURIComponent((url.match(/\/contents\/?(.*?)(\?.*)?$/) ?? [])[1] ?? '');
+      if (path === 'یادداشت.md') {
+        vanishOnRead = false;
+        remote.files.delete('یادداشت.md');
+      }
+    }
+    return innerFetch(url, options);
+  };
+  const service = createService({ storage, events: events(), fetchFn });
+  await configure(service);
+  const first = await service.syncNow({ scope: SCOPE });
+  assert.equal(first.completed, true);
+
+  await storage.delete('docs', 'a');
+  await storage.write('docs', { id: 'b', title: 'یادداشت', content: 'بازنویسی', folderId: null, updatedAt: 40 });
+  const report = await service.syncNow({ scope: SCOPE });
+  assert.equal(report.completed, false);
+  assert.deepEqual(report.conflicts.map((item) => item.id), ['b']);
+
+  vanishOnRead = true;
+  const resolved = await service.resolveConflict({ collection: 'docs', id: 'b', choice: 'remote' });
+
+  assert.equal(resolved.remaining, 1, 'a vanished remote file keeps the conflict open');
+  assert.equal((await storage.read('docs', 'b')).content, 'بازنویسی', 'the local record was not touched');
+});
+
 test('should_publish_changed_items_without_path_when_a_resolution_applies', async () => {
   // The sync:changed contract documents `{ collection, id }` items; the
   // internal path bookkeeping of resolution outcomes stays internal.
