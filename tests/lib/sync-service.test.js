@@ -1206,6 +1206,93 @@ test('should_keep_the_conflict_open_when_the_chosen_remote_file_cannot_shape_int
   assert.equal(kept.text, 'نسخه طرف', 'the next round must not push the local content over the chosen remote file');
 });
 
+test('should_reject_a_remote_resolution_when_the_remote_changed_between_prompt_and_resolve', async () => {
+  // The prompt→resolve window: the host decided on the content the report
+  // showed. A remote change before resolve means the user would accept
+  // content they never saw — the resolution is skipped and the next round
+  // re-asks with the fresh content.
+  const { service, storage, remote } = setup({
+    storageData: { docs: [{ id: 'a', title: 'یادداشت', content: 'نسخه اولیه', folderId: null, updatedAt: 30 }] },
+  });
+  await configure(service);
+  await service.syncNow({ scope: SCOPE });
+  remote.files.set('یادداشت.md', { content: encode('نسخه طرف'), rev: 'd2' });
+  await storage.delete('docs', 'a');
+  await storage.write('docs', { id: 'b', title: 'یادداشت', content: 'بازنویسی', folderId: null, updatedAt: 40 });
+  const report = await service.syncNow({ scope: SCOPE });
+  assert.equal(report.completed, false);
+  assert.equal(report.conflicts[0].remote.content, 'نسخه طرف', 'the prompt showed this version');
+
+  // Outside the plugin, the remote file changes after the prompt.
+  remote.files.set('یادداشت.md', { content: encode('نسخه مخفی'), rev: 'd3' });
+
+  const resolved = await service.resolveConflict({ collection: 'docs', id: 'b', choice: 'remote' });
+  assert.equal(resolved.remaining, 1, 'the stale-content resolution is refused');
+  assert.equal((await storage.read('docs', 'b')).content, 'بازنویسی', 'the local record was not overwritten with unseen content');
+
+  // The next round re-asks with the fresh content; resolving then works.
+  const report2 = await service.syncNow({ scope: SCOPE });
+  assert.equal(report2.completed, false);
+  assert.equal(report2.conflicts[0].remote.content, 'نسخه مخفی', 'the fresh content is what the next prompt shows');
+  const resolved2 = await service.resolveConflict({ collection: 'docs', id: 'b', choice: 'remote' });
+  assert.equal(resolved2.remaining, 0);
+  assert.equal((await storage.read('docs', 'b')).content, 'نسخه مخفی');
+});
+
+test('should_apply_the_factory_default_branch_when_the_backend_was_configured_without_one', async () => {
+  // `branch` is documented optional with the main default: a configure that
+  // omits it must not leave a `branch: null` record that wedges every later
+  // call with "backend requires a branch".
+  const { service, storage } = setup({
+    storageData: { docs: [{ id: 'a', title: 'یادداشت', content: 'نسخه من', folderId: null, updatedAt: 30 }] },
+  });
+  const configured = await service.configureBackend({
+    kind: 'git',
+    params: { repo: 'u/r', token: 'tok' },
+  });
+  assert.equal(configured.ok, true);
+  const record = await storage.read('sync_backends', 'active');
+  assert.equal(record.branch, null);
+
+  const report = await service.syncNow({ scope: SCOPE });
+  assert.equal(report.completed, true, 'the round ran on the default branch');
+});
+
+test('should_report_an_unreadable_remote_side_as_null_when_the_file_vanishes_before_the_enriching_read', async () => {
+  // A vanished file is not an empty file: the report must distinguish
+  // "empty" from "unreadable at report time" (null).
+  const storage = memoryStorage({
+    docs: [{ id: 'a', title: 'یادداشت', content: 'نسخه اولیه', folderId: null, updatedAt: 30 }],
+  });
+  const remote = fakeGitHub({});
+  const innerFetch = remote.fetchFn;
+  let vanishOnRead = false;
+  const fetchFn = async (url, options = {}) => {
+    if (vanishOnRead && (options.method ?? 'GET') === 'GET' && url.includes('/contents/')) {
+      const path = decodeURIComponent((url.match(/\/contents\/?(.*?)(\?.*)?$/) ?? [])[1] ?? '');
+      if (path === 'یادداشت.md') {
+        vanishOnRead = false;
+        remote.files.delete('یادداشت.md');
+      }
+    }
+    return innerFetch(url, options);
+  };
+  const service = createService({ storage, events: events(), fetchFn });
+  await configure(service);
+  await service.syncNow({ scope: SCOPE });
+
+  // Takeover: the remote file keeps its revision (so the rev shortcut
+  // leaves it unread during capture) and vanishes right before the
+  // compensating enrich read.
+  await storage.delete('docs', 'a');
+  await storage.write('docs', { id: 'b', title: 'یادداشت', content: 'بازنویسی', folderId: null, updatedAt: 40 });
+  vanishOnRead = true;
+  const report = await service.syncNow({ scope: SCOPE });
+  assert.equal(report.completed, false);
+  assert.deepEqual(report.conflicts.map((item) => item.id), ['b']);
+  assert.equal(report.conflicts[0].remote.content, null, 'unreadable is null, never an empty string');
+});
+
 test('should_fail_the_round_when_the_git_directory_listing_hits_the_truncation_limit', async () => {
   // GitHub's Contents API silently truncates a listing at 1,000 entries:
   // an incomplete listing must never drive a round — paths missing from it

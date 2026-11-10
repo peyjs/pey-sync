@@ -1,11 +1,14 @@
 # Changelog — pey.sync
 
-## [2.0.1] - 1405-08-17
+## [2.0.1] - 1405-08-19
 
-Round-3, round-4 and round-5 review fixes (all unpublished; one release). No contract change; `sync:changed` items now match their documented shape exactly.
+Round-3 through round-6 review fixes (all unpublished; one release). No contract change; `sync:changed` items now match their documented shape exactly.
 
 ### Fixed
 
+- **The prompt→resolve window is now guarded too**: when a round stops on conflicts, each open conflict's remote hash is pinned as the prompt anchor; resolving the **remote** choice against a remote whose hash no longer matches is refused (applied stays false) — the user can never accept content they were not shown. The next round re-asks with the fresh content (regression test added).
+- A backend configured without `branch` no longer wedges every later call: stored `null` fields are stripped before the adapter factory runs, so the factory's documented default (`main`) applies (regression test added).
+- The conflict report's remote content is `null` — never an empty string — when the file was unreadable at report time, so the host can tell "empty" from "unreadable" (documented; regression test added).
 - **The git backend now fails loudly when a directory listing hits GitHub's silent 1,000-entry truncation limit** (`GIT_DIRECTORY_TRUNCATED`, mapped to `SYNC_REMOTE_INVALID`): an incomplete listing previously read as "remotely deleted" for everything past the cutoff and would have silently destroyed local edits. Documented in the reference next to the gitlab adapter's pagination cap (regression test added).
 - A takeover conflict whose remote file was skipped by the rev shortcut now reports the REAL remote content to the host — an empty string made a non-empty file look "remotely empty" and steered the user's choice (regression test added).
 - The skipped "remote" resolution of a conflict whose remote file vanished is documented honestly: the conflict stays open, and a file that never comes back is closed by the next round's regular takeover push rule (comment, reference and regression test aligned).
