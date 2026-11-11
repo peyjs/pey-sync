@@ -2,12 +2,14 @@
 
 ## [2.0.1] - 1405-08-19
 
-Round-3 through round-7 review fixes (all unpublished; one release). No contract change; `sync:changed` items now match their documented shape exactly.
+Round-3 through round-8 review fixes (all unpublished; one release). No contract change; `sync:changed` items now match their documented shape exactly.
 
 ### Fixed
 
 - **The prompt guard is FAIL-CLOSED**: a conflict that was never presented in a conflict report (it came to life in the resolve's own capture) refuses its remote resolution too — absence from the pin list means "never shown" (regression test added).
 - The delete-vs-change **local** choice's DELETION branch runs the same freshness check: a remote file that changed after the prompt is not destroyed on the strength of a stale view (regression test added).
+- The local choice's PUSH branch (overwriting the remote file with the local content) runs the same freshness check (round 8): a remote change after the prompt is not silently overwritten on a stale view — every branch that destroys remote content now guards (regression test added).
+- Prompt pins belong to the destination, not the service (round 8): `removeBackend` deletes the pin record and switching the backend identity clears the pin list, so a stale pin can never authorize resolving a conflict the current destination never prompted (regression test added). Requirement 29 and the reference guard paragraph now state the freshness exception on the delete-vs-change branch explicitly, ending their internal disagreement with requirement 22.
 - **The prompt→resolve window is now guarded too**: when a round stops on conflicts, each open conflict's remote hash is pinned as the prompt anchor; resolving the **remote** choice against a remote whose hash no longer matches is refused (applied stays false) — the user can never accept content they were not shown. The next round re-asks with the fresh content (regression test added).
 - A backend configured without `branch` no longer wedges every later call: stored `null` fields are stripped before the adapter factory runs, so the factory's documented default (`main`) applies (regression test added).
 - The conflict report's remote content is `null` — never an empty string — when the file was unreadable at report time, so the host can tell "empty" from "unreadable" (documented; regression test added).

@@ -1346,6 +1346,59 @@ test('should_refuse_a_local_deletion_when_the_remote_file_changed_after_the_prom
   assert.equal(decode(remote.files.get('یادداشت.md').content), 'محتوای تازه‌تر مخفی', 'the unseen remote version survived');
 });
 
+test('should_refuse_a_local_push_when_the_remote_file_changed_after_the_prompt', async () => {
+  // The push branch of the local choice is a remote operation too: it
+  // overwrites the remote file with the local content. A remote change
+  // after the prompt means content the user never saw would die — the
+  // resolution is refused so the next round re-asks with the fresh content
+  // (same freshness class as the deletion branch and the remote choice).
+  const { service, storage, remote } = setup({
+    storageData: { docs: [{ id: 'p1', title: 'یادداشت', content: 'نسخه من', folderId: null, updatedAt: 30 }] },
+  });
+  await configure(service);
+  await service.syncNow({ scope: SCOPE });
+  remote.files.set('یادداشت.md', { content: encode('نسخه طرف'), rev: 'd2' });
+  await storage.delete('docs', 'p1');
+  await storage.write('docs', { id: 'p2', title: 'یادداشت', content: 'بازنویسی', folderId: null, updatedAt: 40 });
+  const report = await service.syncNow({ scope: SCOPE });
+  assert.equal(report.completed, false);
+  assert.deepEqual(report.conflicts.map((item) => item.id), ['p2']);
+
+  remote.files.set('یادداشت.md', { content: encode('نسخه مخفی'), rev: 'd3' });
+
+  const resolved = await service.resolveConflict({ collection: 'docs', id: 'p2', choice: 'local' });
+  assert.equal(resolved.remaining, 1, 'the stale-prompt push is refused');
+  assert.equal(decode(remote.files.get('یادداشت.md').content), 'نسخه مخفی', 'the unseen remote version was not overwritten');
+  assert.equal((await storage.read('docs', 'p2')).content, 'بازنویسی', 'the local edit stays untouched');
+});
+
+test('should_refuse_a_resolution_when_the_pin_belongs_to_a_destination_that_is_gone', async () => {
+  // Prompt pins belong to a destination, not to the service: switching the
+  // backend (without removeBackend, keeping the registered scope alive)
+  // must clear them, or the old destination's pin would authorize resolving
+  // a conflict the new destination never prompted.
+  const { service, storage, remote } = setup({
+    storageData: { docs: [{ id: 's1', title: 'یادداشت', content: 'نسخه من', folderId: null, updatedAt: 30 }] },
+  });
+  await configure(service);
+  await service.syncNow({ scope: SCOPE });
+  remote.files.set('یادداشت.md', { content: encode('نسخه طرف'), rev: 'd2' });
+  await storage.delete('docs', 's1');
+  await storage.write('docs', { id: 's2', title: 'یادداشت', content: 'بازنویسی', folderId: null, updatedAt: 40 });
+  const report = await service.syncNow({ scope: SCOPE });
+  assert.equal(report.completed, false);
+  assert.deepEqual(report.conflicts.map((item) => item.id), ['s2'], 'the conflict was prompted on u/r');
+
+  await service.configureBackend({
+    kind: 'git',
+    params: { repo: 'u/r2', branch: 'main', token: 'tok' },
+  });
+
+  const resolved = await service.resolveConflict({ collection: 'docs', id: 's2', choice: 'remote' });
+  assert.equal(resolved.remaining, 1, 'the old destination pin does not authorize the new destination');
+  assert.equal(decode(remote.files.get('یادداشت.md').content), 'نسخه طرف', 'the resolution was not applied without a fresh prompt');
+});
+
 test('should_fail_the_round_when_the_git_directory_listing_hits_the_truncation_limit', async () => {
   // GitHub's Contents API silently truncates a listing at 1,000 entries:
   // an incomplete listing must never drive a round — paths missing from it
