@@ -2,12 +2,13 @@
 
 ## [2.0.1] - 1405-08-19
 
-Round-3 through round-8 review fixes (all unpublished; one release). No contract change; `sync:changed` items now match their documented shape exactly.
+Round-3 through round-9 review fixes (all unpublished; one release). No contract change; `sync:changed` items now match their documented shape exactly.
 
 ### Fixed
 
 - **The prompt guard is FAIL-CLOSED**: a conflict that was never presented in a conflict report (it came to life in the resolve's own capture) refuses its remote resolution too — absence from the pin list means "never shown" (regression test added).
 - The delete-vs-change **local** choice's DELETION branch runs the same freshness check: a remote file that changed after the prompt is not destroyed on the strength of a stale view (regression test added).
+- The record-rename twin conflict is addressed honestly (round 9): a rename onto an occupied path while the OLD path's remote was edited made the planner ask twice with ONE id — `resolveConflict` silently picked the first match, the rename's free-the-old-path delete destroyed the old path's never-shown remote content, and the twin vanished from the open set with the clock advancing (a fake "complete" round). Now resolve refuses twins with `SYNC_INVALID_CONFIG` until the ambiguity clears, the contested old-path delete is skipped while a conflict owns that path, and both choices are locked by regression tests. The docs' guard-refusal wording no longer describes a nonexistent `applied: false` field — the observable refusal is `remaining` not dropping (and the conflict staying in the `sync:changed` open set) (238 tests).
 - The local choice's PUSH branch (overwriting the remote file with the local content) runs the same freshness check (round 8): a remote change after the prompt is not silently overwritten on a stale view — every branch that destroys remote content now guards (regression test added).
 - Prompt pins belong to the destination, not the service (round 8): `removeBackend` deletes the pin record and switching the backend identity clears the pin list, so a stale pin can never authorize resolving a conflict the current destination never prompted (regression test added). Requirement 29 and the reference guard paragraph now state the freshness exception on the delete-vs-change branch explicitly, ending their internal disagreement with requirement 22.
 - **The prompt→resolve window is now guarded too**: when a round stops on conflicts, each open conflict's remote hash is pinned as the prompt anchor; resolving the **remote** choice against a remote whose hash no longer matches is refused (applied stays false) — the user can never accept content they were not shown. The next round re-asks with the fresh content (regression test added).

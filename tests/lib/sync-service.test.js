@@ -1346,6 +1346,68 @@ test('should_refuse_a_local_deletion_when_the_remote_file_changed_after_the_prom
   assert.equal(decode(remote.files.get('یادداشت.md').content), 'محتوای تازه‌تر مخفی', 'the unseen remote version survived');
 });
 
+test('should_refuse_resolving_when_two_conflicts_share_one_id_and_destroy_nothing', async () => {
+  // The record-rename twin: a rename onto an occupied path while the OLD
+  // path's remote was edited makes the planner ask twice with ONE id — the
+  // host cannot answer them apart, so resolve refuses instead of silently
+  // resolving the first match (which also cleared the twin, advanced the
+  // clock and destroyed the old path's unseen remote content through the
+  // rename's free-the-old-path delete).
+  for (const choice of ['local', 'remote']) {
+    const { service, storage, remote } = setup({
+      storageData: { docs: [{ id: 'x1', title: 'عنوان کهنه', content: 'نسخه من', folderId: null, updatedAt: 30 }] },
+    });
+    await configure(service);
+    await service.syncNow({ scope: SCOPE });
+    remote.files.set('عنوان کهنه.md', { content: encode('محتوای تازه مخفی در مسیر قدیم'), rev: 'r2' });
+    remote.files.set('عنوان تازه.md', { content: encode('فایل غریبه روی مسیر تازه'), rev: 'r3' });
+    await storage.write('docs', { id: 'x1', title: 'عنوان تازه', content: 'نسخه من', folderId: null, updatedAt: 40 });
+    const report = await service.syncNow({ scope: SCOPE });
+    assert.equal(report.completed, false);
+    assert.equal(report.conflicts.length, 2, 'the planner asks twice');
+    assert.deepEqual([...new Set(report.conflicts.map((item) => item.id))], ['x1'], 'both prompts share one id');
+
+    await assert.rejects(
+      () => service.resolveConflict({ collection: 'docs', id: 'x1', choice }),
+      (error) => error.code === 'SYNC_INVALID_CONFIG' && error.detail?.count === 2,
+      'the ambiguous twin refuses both choices',
+    );
+
+    assert.equal(decode(remote.files.get('عنوان کهنه.md').content), 'محتوای تازه مخفی در مسیر قدیم', 'the old path content survived');
+    assert.equal(decode(remote.files.get('عنوان تازه.md').content), 'فایل غریبه روی مسیر تازه', 'the new path stranger survived');
+    const status = await service.getStatus();
+    assert.equal(status.lastSyncedAt ?? status.syncedAt ?? null, null, 'the clock never advanced for an unresolved round');
+  }
+});
+
+test('should_keep_the_old_path_when_a_rename_lands_while_its_old_remote_path_is_contested', async () => {
+  // Defense in depth under the resolution path itself: the rename's
+  // free-the-old-path delete must not run while the plan carries an open
+  // conflict on that path — the twin question owns that content.
+  const { service, storage, remote } = setup({
+    storageData: {
+      docs: [
+        { id: 'm1', title: 'عنوان کهنه', content: 'نسخه من', folderId: null, updatedAt: 30 },
+        { id: 'other', title: 'دیگر', content: 'بدون تغییر', folderId: null, updatedAt: 10 },
+      ],
+    },
+  });
+  await configure(service);
+  await service.syncNow({ scope: SCOPE });
+  remote.files.set('عنوان کهنه.md', { content: encode('محتوای تازه مخفی در مسیر قدیم'), rev: 'r2' });
+  remote.files.set('عنوان تازه.md', { content: encode('فایل غریبه روی مسیر تازه'), rev: 'r3' });
+  await storage.write('docs', { id: 'm1', title: 'عنوان تازه', content: 'نسخه من', folderId: null, updatedAt: 40 });
+  const report = await service.syncNow({ scope: SCOPE });
+  assert.equal(report.completed, false);
+  assert.equal(report.conflicts.length, 2);
+
+  await assert.rejects(
+    () => service.resolveConflict({ collection: 'docs', id: 'm1', choice: 'local' }),
+    (error) => error.code === 'SYNC_INVALID_CONFIG',
+  );
+  assert.equal(decode(remote.files.get('عنوان کهنه.md').content), 'محتوای تازه مخفی در مسیر قدیم');
+});
+
 test('should_refuse_a_local_push_when_the_remote_file_changed_after_the_prompt', async () => {
   // The push branch of the local choice is a remote operation too: it
   // overwrites the remote file with the local content. A remote change
