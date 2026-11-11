@@ -1293,6 +1293,59 @@ test('should_report_an_unreadable_remote_side_as_null_when_the_file_vanishes_bef
   assert.equal(report.conflicts[0].remote.content, null, 'unreadable is null, never an empty string');
 });
 
+test('should_refuse_a_remote_resolution_for_a_conflict_that_was_never_prompted', async () => {
+  // FAIL-CLOSED prompt guard: a conflict that comes to life in the resolve's
+  // own capture (created between the prompt and the resolve) was never shown
+  // to the host — its remote resolution is refused so the host gets a fresh
+  // prompt with the real content first.
+  const { service, storage, remote } = setup({
+    storageData: {
+      docs: [
+        { id: 'a', title: 'یادداشت', content: 'نسخه من', folderId: null, updatedAt: 30 },
+        { id: 'c', title: 'یادداشت دوم', content: 'محلی c', folderId: null, updatedAt: 30 },
+      ],
+    },
+  });
+  await configure(service);
+  await service.syncNow({ scope: SCOPE });
+  remote.files.set('یادداشت.md', { content: encode('نسخه طرف'), rev: 'd2' });
+  await storage.delete('docs', 'a');
+  await storage.write('docs', { id: 'b', title: 'یادداشت', content: 'بازنویسی', folderId: null, updatedAt: 40 });
+  const report = await service.syncNow({ scope: SCOPE });
+  assert.equal(report.completed, false);
+  assert.deepEqual(report.conflicts.map((item) => item.id), ['b'], 'only b was prompted');
+
+  // Between prompt and resolve: remote c changes, host edits record c.
+  remote.files.set('یادداشت دوم.md', { content: encode('نسخه ریموتِ دیده‌نشده'), rev: 'x2' });
+  await storage.write('docs', { id: 'c', title: 'یادداشت دوم', content: 'ویرایش میزبان', folderId: null, updatedAt: 50 });
+
+  const resolved = await service.resolveConflict({ collection: 'docs', id: 'c', choice: 'remote' });
+  assert.equal(resolved.remaining >= 1, true, 'the never-prompted conflict is refused');
+  assert.equal((await storage.read('docs', 'c')).content, 'ویرایش میزبان', 'the unseen remote content was not adopted');
+});
+
+test('should_refuse_a_local_deletion_when_the_remote_file_changed_after_the_prompt', async () => {
+  // The delete-vs-change deletion branch is a REMOTE operation on content
+  // the user was shown: when that content changed before the resolve, the
+  // deletion is refused instead of destroying the unseen version.
+  const { service, storage, remote } = setup({
+    storageData: { docs: [{ id: 'd1', title: 'یادداشت', content: 'نسخه من', folderId: null, updatedAt: 30 }] },
+  });
+  await configure(service);
+  await service.syncNow({ scope: SCOPE });
+  remote.files.set('یادداشت.md', { content: encode('نسخه طرف'), rev: 'd2' });
+  await storage.delete('docs', 'd1');
+  const report = await service.syncNow({ scope: SCOPE });
+  assert.equal(report.completed, false);
+  assert.deepEqual(report.conflicts.map((item) => item.id), ['d1']);
+
+  remote.files.set('یادداشت.md', { content: encode('محتوای تازه‌تر مخفی'), rev: 'd3' });
+
+  const resolved = await service.resolveConflict({ collection: 'docs', id: 'd1', choice: 'local' });
+  assert.equal(resolved.remaining, 1, 'the stale-prompt deletion is refused');
+  assert.equal(decode(remote.files.get('یادداشت.md').content), 'محتوای تازه‌تر مخفی', 'the unseen remote version survived');
+});
+
 test('should_fail_the_round_when_the_git_directory_listing_hits_the_truncation_limit', async () => {
   // GitHub's Contents API silently truncates a listing at 1,000 entries:
   // an incomplete listing must never drive a round — paths missing from it
