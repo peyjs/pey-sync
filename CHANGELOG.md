@@ -2,10 +2,11 @@
 
 ## [2.0.1] - 1405-08-19
 
-Round-3 through round-9 review fixes (all unpublished; one release). No contract change; `sync:changed` items now match their documented shape exactly.
+Round-3 through round-11 review fixes (all unpublished; one release). No contract change; `sync:changed` items now match their documented shape exactly.
 
 ### Fixed
 
+- Round 11: the takeover push on a shared path whose snapshot owner moved away is no longer unconditional — when the remote file drifted from the snapshot since the last sync (an unseen remote edit), planning now reaches a CONFLICT instead of silently overwriting the remote content and reporting a complete round; the takeover push itself stays intact while the remote still matches the snapshot (requirement 18's quiet rewrite now carries its own safety condition, spelled out there, and requirement 20's both-sides-changed rule covers this shape — two regression tests added). `hasPendingChanges` validates the scope only AFTER the unconfigured check: unconfigured always answers `{ pending: false }` regardless of the scope's shape, per requirement 25's "never an error" (regression test added); the configured-service rejection of a bad scope is unchanged (242 tests).
 - **The prompt guard is FAIL-CLOSED**: a conflict that was never presented in a conflict report (it came to life in the resolve's own capture) refuses its remote resolution too — absence from the pin list means "never shown" (regression test added).
 - The delete-vs-change **local** choice's DELETION branch runs the same freshness check: a remote file that changed after the prompt is not destroyed on the strength of a stale view (regression test added).
 - The record-rename twin conflict is addressed honestly (round 9): a rename onto an occupied path while the OLD path's remote was edited made the planner ask twice with ONE id — `resolveConflict` silently picked the first match, the rename's free-the-old-path delete destroyed the old path's never-shown remote content, and the twin vanished from the open set with the clock advancing (a fake "complete" round). Now resolve refuses twins with `SYNC_INVALID_CONFIG` until the ambiguity clears, the contested old-path delete is skipped while a conflict owns that path, and both choices are locked by regression tests. The docs' guard-refusal wording no longer describes a nonexistent `applied: false` field — the observable refusal is `remaining` not dropping (and the conflict staying in the `sync:changed` open set) (238 tests).

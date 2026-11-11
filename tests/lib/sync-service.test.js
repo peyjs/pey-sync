@@ -942,6 +942,17 @@ test('should_reject_bad_scope_and_missing_storage_when_checked', async () => {
   assert.equal(missing?.code, 'SYNC_STORAGE_UNAVAILABLE');
 });
 
+test('should_return_not_pending_when_unconfigured_regardless_of_scope', async () => {
+  // Round-11 regression: requirement 25's "unconfigured is always false,
+  // never an error" is checked BEFORE the scope is validated — no
+  // comparison is coming, so the scope's shape cannot change the answer.
+  const fresh = setup();
+  const empty = await fresh.service.hasPendingChanges({ scope: { collections: [] } });
+  assert.deepEqual(empty, { pending: false });
+  const unknown = await fresh.service.hasPendingChanges({ scope: { collections: [{ collection: 'nope', serializer: 'markdown' }] } });
+  assert.deepEqual(unknown, { pending: false });
+});
+
 test('should_fail_status_check_when_storage_is_missing', async () => {
   const service = createService({ storage: null, events: events(), fetchFn: async () => ({}) });
   const error = await service.getStatus().catch((caught) => caught);

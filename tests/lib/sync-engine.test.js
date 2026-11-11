@@ -196,6 +196,25 @@ test('should_push_take_over_when_snapshot_owner_moved_away', () => {
   assert.deepEqual(plan.conflicts, []);
 });
 
+test('should_conflict_when_a_moved_owner_takeover_meets_remote_drift', () => {
+  // Round-11 regression: the takeover push is safe ONLY while the remote
+  // file still matches the snapshot. A remote edit since the last sync is
+  // content the round has never seen — overwriting it silently destroyed
+  // it and still reported a complete round (requirement 20: both sides
+  // changed relative to the snapshot, so asking is the only safe move).
+  const plan = planSync(
+    [snap({ id: 'a', path: 'a.md', hash: 'base' })],
+    [local({ id: 'a', path: 'b.md', hash: 'moved' }), local({ id: 'b', path: 'a.md', hash: 'claim' })],
+    [remote({ id: null, path: 'a.md', hash: 'edited-remote', rev: 'r2' })],
+  );
+  assert.equal(plan.push.find((item) => item.path === 'a.md'), undefined, 'the takeover never becomes a silent push over unseen remote content');
+  assert.equal(plan.push.length, 1, 'the moved owner\'s NEW path is still a plain push');
+  assert.equal(plan.push[0].path, 'b.md');
+  assert.equal(plan.conflicts.length, 1);
+  assert.equal(plan.conflicts[0].id, 'b');
+  assert.equal(plan.conflicts[0].remote.hash, 'edited-remote');
+});
+
 test('should_conflict_when_a_foreign_snapshot_owner_vanished', () => {
   const plan = planSync(
     [snap({ id: 'old', path: 'a.md', hash: 'old' })],
