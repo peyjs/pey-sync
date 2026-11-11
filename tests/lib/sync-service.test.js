@@ -1346,6 +1346,64 @@ test('should_refuse_a_local_deletion_when_the_remote_file_changed_after_the_prom
   assert.equal(decode(remote.files.get('یادداشت.md').content), 'محتوای تازه‌تر مخفی', 'the unseen remote version survived');
 });
 
+test('should_match_any_pin_of_an_id_when_the_twin_ambiguity_clears_and_resolve_directly', async () => {
+  // After the twin's ambiguity clears (the record stops claiming both
+  // paths), the surviving conflict's remote hash sits in the SECOND of the
+  // two same-id pins written by the twin round: the guard must match ANY
+  // pin of the id — the user decided on content the twin prompt DID show —
+  // without needing a wasted re-prompt round in between.
+  const { service, storage, remote } = setup({
+    storageData: { docs: [{ id: 't1', title: 'عنوان کهنه', content: 'نسخه من', folderId: null, updatedAt: 30 }] },
+  });
+  await configure(service);
+  await service.syncNow({ scope: SCOPE });
+  remote.files.set('عنوان کهنه.md', { content: encode('محتوای تازه در مسیر قدیم'), rev: 'r2' });
+  remote.files.set('عنوان تازه.md', { content: encode('فایل غریبه روی مسیر تازه'), rev: 'r3' });
+  await storage.write('docs', { id: 't1', title: 'عنوان تازه', content: 'نسخه من', folderId: null, updatedAt: 40 });
+  const report = await service.syncNow({ scope: SCOPE });
+  assert.equal(report.conflicts.length, 2, 'the twin round pins twice for one id');
+
+  await assert.rejects(
+    () => service.resolveConflict({ collection: 'docs', id: 't1', choice: 'remote' }),
+    (error) => error.code === 'SYNC_INVALID_CONFIG',
+  );
+
+  // The ambiguity clears: the record releases the new path (title back,
+  // content edited so the old path is a live edit-vs-edit conflict).
+  await storage.write('docs', { id: 't1', title: 'عنوان کهنه', content: 'نسخه من ویرایش میزبان', folderId: null, updatedAt: 50 });
+  const resolved = await service.resolveConflict({ collection: 'docs', id: 't1', choice: 'remote' });
+  assert.equal(resolved.remaining, 0, 'the shown-content decision lands without an extra prompt round');
+  assert.equal(decode(remote.files.get('عنوان کهنه.md').content), 'محتوای تازه در مسیر قدیم', 'the remote content the user chose won');
+});
+
+test('should_not_report_pending_for_a_collection_that_left_the_scope_and_resume_cleanly_when_it_returns', async () => {
+  // A removed collection's ghost entries are outside the engine's
+  // jurisdiction: the dirty dot must not stick true forever on entries no
+  // round will ever touch — and re-adding the collection resumes from the
+  // kept baseline without a spurious conflict or re-push.
+  const { service, storage, remote } = setup({
+    storageData: {
+      docs: [{ id: 'a', title: 'یادداشت', content: 'متن اول', folderId: null, updatedAt: 30 }],
+      notes: [{ key: 'n1', text: 'متن یادداشت', mtime: 20 }],
+    },
+  });
+  await configure(service);
+  await service.syncNow({ scope: { collections: [SCOPE.collections[0], JSON_SCOPE.collections[0]] } });
+  assert.deepEqual(await service.hasPendingChanges({ scope: { collections: [SCOPE.collections[0], JSON_SCOPE.collections[0]] } }), { pending: false });
+
+  // Shrink the scope: the notes ghost must not light the dirty dot.
+  const smallScope = { collections: [SCOPE.collections[0]] };
+  assert.deepEqual(await service.hasPendingChanges({ scope: smallScope }), { pending: false }, 'the ghost is outside the jurisdiction');
+  await service.syncNow({ scope: smallScope });
+  assert.deepEqual(await service.hasPendingChanges({ scope: smallScope }), { pending: false });
+
+  // Re-adding resumes from the kept baseline: no spurious conflict, no
+  // spurious re-push of the notes.
+  const eventsBefore = remote.writes ? remote.writes().length : null;
+  await service.syncNow({ scope: { collections: [SCOPE.collections[0], JSON_SCOPE.collections[0]] } });
+  assert.deepEqual(await service.hasPendingChanges({ scope: { collections: [SCOPE.collections[0], JSON_SCOPE.collections[0]] } }), { pending: false });
+});
+
 test('should_refuse_resolving_when_two_conflicts_share_one_id_and_destroy_nothing', async () => {
   // The record-rename twin: a rename onto an occupied path while the OLD
   // path's remote was edited makes the planner ask twice with ONE id — the
