@@ -1843,7 +1843,7 @@ test('should_drop_a_both_sides_gone_baseline_entry_and_clear_the_dirty_dot_when_
   assert.deepEqual(await service.hasPendingChanges({ scope: SCOPE }), { pending: false });
 });
 
-test('should_survive_a_base_path_round_trip_with_a_live_record_and_clear_the_dirty_dot', async () => {
+test('should_clear_the_dirty_dot_when_a_base_path_round_trip_returns_with_a_live_record', async () => {
   // Round-16 P1 regression: the round-14 keep guard lived only in the
   // PLANNING layer — the merge's id-keyed displacement (one record one
   // path) still dropped the foreign-alive old-path entry when the same
@@ -1876,7 +1876,7 @@ test('should_survive_a_base_path_round_trip_with_a_live_record_and_clear_the_dir
   assert.deepEqual(await service.hasPendingChanges({ scope: rootScope }), { pending: false });
 });
 
-test('should_propagate_the_deletion_intent_across_a_base_path_round_trip_without_resurrecting_the_record', async () => {
+test('should_propagate_the_deletion_intent_when_a_base_path_round_trip_returns_after_the_record_was_deleted', async () => {
   // Round-16 P1 regression, delete variant: record deleted + basePath moved
   // in the same window used to FORGET the foreign-alive root entry in the
   // merge, so returning to the root pulled the file as "remote-only grown
@@ -1898,5 +1898,43 @@ test('should_propagate_the_deletion_intent_across_a_base_path_round_trip_without
   await service.syncNow({ scope: rootScope });
   assert.deepEqual(await storage.query('docs'), [], 'the deleted record is NEVER resurrected with a fresh id');
   assert.equal(remote.files.has('T.md'), false, 'the user deletion intent propagates to the original remote file');
+  assert.deepEqual(await service.hasPendingChanges({ scope: rootScope }), { pending: false });
+});
+
+test('should_push_the_record_to_the_old_path_when_the_foreign_alive_file_dies_externally_and_the_base_path_returns', async () => {
+  // Round-17 P0 regression: the jurisdiction filter kept a foreign-alive
+  // entry WITHOUT checking the file's real aliveness — when the remote
+  // file died EXTERNALLY while the config stayed on the new basePath, the
+  // dead claim survived every round, and on return to the old basePath
+  // planLocalOnlyPath read it as "remote deleted unchanged content" and
+  // silently DESTROYED the live record (a complete round, zero conflicts).
+  // Aliveness is now conditioned on this round's unattributed listing: a
+  // dead claim flows into gonePaths, and the return round converges the
+  // record with the untouched file instead of deleting anything.
+  const rootScope = { collections: [{ collection: 'docs', serializer: 'markdown', titleField: 'title' }] };
+  const movedScope = { collections: [{ collection: 'docs', serializer: 'markdown', titleField: 'title', basePath: 'b' }] };
+  const { service, storage, remote } = setup({
+    storageData: { docs: [{ id: 'a', title: 'T', content: 'متن' }] },
+    files: {},
+  });
+  await configure(service);
+  await service.syncNow({ scope: rootScope });
+  await service.syncNow({ scope: movedScope });
+  assert.ok(remote.files.has('T.md'));
+  // Another client removes the ORIGINAL file while the config stays on b.
+  remote.files.delete('T.md');
+  const middle = await service.syncNow({ scope: movedScope });
+  assert.equal(middle.completed, true, 'the middle round completes: the dead claim was dropped, nothing to do');
+  assert.deepEqual(await service.hasPendingChanges({ scope: movedScope }), { pending: false });
+
+  const returned = await service.syncNow({ scope: rootScope });
+  assert.equal(returned.completed, true);
+  assert.deepEqual(returned.conflicts, [], 'no ghost delete-vs-change question about a file that no longer exists');
+  assert.equal(returned.deleteLocal.length, 0, 'the live record is NEVER silently destroyed');
+  assert.ok(remote.files.has('T.md'), 'the record converged back to its original path');
+  assert.deepEqual(await storage.query('docs').then((records) => records.map((record) => record.id)), ['a'], 'the record keeps its identity');
+  assert.deepEqual(await service.hasPendingChanges({ scope: rootScope }), { pending: false });
+  const next = await service.syncNow({ scope: rootScope });
+  assert.equal(next.completed, true);
   assert.deepEqual(await service.hasPendingChanges({ scope: rootScope }), { pending: false });
 });
