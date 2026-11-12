@@ -340,3 +340,24 @@ test('should_report_both_sides_gone_paths_for_baseline_drop_when_planned', () =>
   );
   assert.deepEqual(mixed.gonePaths, ['gone.md']);
 });
+
+test('should_keep_the_baseline_entry_when_a_gone_snapshot_path_holds_a_live_foreign_file', () => {
+  // Round-14 regression: the gone branch ignored the foreign set, so a
+  // snapshot path whose remote file was alive but UNATTRIBUTED (the
+  // basePath-change-orphan shape) had its baseline entry silently dropped —
+  // the round completed, the dirty dot cleared, and after the config was
+  // fixed the deleted record was RESURRECTED with a fresh id, the user's
+  // deletion intent never adjudicated. The foreign set defers the drop.
+  const foreign = new Set(['docs/old.md']);
+  const plan = planSync(
+    [snap({ id: 'old', path: 'docs/old.md', hash: 'h' })],
+    [],
+    [],
+    foreign,
+  );
+  assert.deepEqual(plan.gonePaths, [], 'a foreign-alive path is not a dead claim');
+  assert.deepEqual(plan.deleteLocal, [], 'and it is never a local deletion to propagate');
+  // Without the foreign set the path IS a dead claim (round 13 behavior).
+  const bare = planSync([snap({ id: 'old', path: 'docs/old.md', hash: 'h' })], [], []);
+  assert.deepEqual(bare.gonePaths, ['docs/old.md']);
+});
