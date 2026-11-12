@@ -138,12 +138,27 @@ test('should_attribute_and_decode_remote_paths_when_listing', () => {
   assert.equal(attributePath('meta/record.json', configs)?.collection, 'meta');
   assert.equal(attributePath('salaam.json', configs)?.collection, 'extra');
   assert.equal(attributePath('final.txt', configs), null);
-  const ambiguous = normalizeScope({
-    collections: [
-      { collection: 'first', serializer: 'json', basePath: '' },
-      { collection: 'second', serializer: 'json', basePath: '' },
-    ],
-  });
+  // The contested shape (same extension AND basePath in two collections)
+  // no longer passes normalizeScope at all — round 12 rejects it loudly at
+  // config time, because attribution ambiguity used to read the engine's
+  // own files as "foreign" and destroy the local records. attributePath's
+  // tie behavior is still covered with a hand-built array (defense-in-depth
+  // contract), and normalizeScope's rejection is locked right here.
+  assert.throws(
+    () => normalizeScope({
+      collections: [
+        { collection: 'first', serializer: 'json', basePath: '' },
+        { collection: 'second', serializer: 'json', basePath: '' },
+      ],
+    }),
+    (error) => error.code === 'SYNC_INVALID_CONFIG'
+      && error.detail?.extension === 'json'
+      && Array.isArray(error.detail?.collections),
+  );
+  const ambiguous = [
+    { collection: 'first', serializer: 'json', basePath: '' },
+    { collection: 'second', serializer: 'json', basePath: '' },
+  ];
   assert.equal(attributePath('salaam.json', ambiguous), null);
   assert.equal(pathEncodedId(configs.find((config) => config.collection === 'meta'), 'meta/record.json'), 'record');
   assert.equal(pathEncodedId(configs.find((config) => config.collection === 'docs'), 'salaam.md'), null);

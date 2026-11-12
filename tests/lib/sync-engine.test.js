@@ -294,3 +294,26 @@ test('should_tolerate_typed_suffix_and_junk_when_ignored', () => {
   assert.equal(matchesIgnore('', ['یادداشت']), false);
   assert.equal(matchesIgnore('یادداشت.md', null), false);
 });
+
+test('should_leave_unattributed_foreign_paths_out_of_the_plan_when_planning_local_only_paths', () => {
+  // Round-12 regression: a path carrying THIS round's unattributed
+  // ("foreign") remote files has a file that EXISTS — the scope just could
+  // not claim it. The old plan read such paths as "remotely deleted":
+  // unchanged locals were silently destroyed with a complete report, an
+  // edited local met a ghost delete-vs-change conflict whose remote choice
+  // destroyed the record, and a new record would have overwritten the
+  // unattributable file. None of the three may happen.
+  const foreign = new Set(['p.md']);
+  const base = [{ collection: 'docs', id: 'a', path: 'p.md', hash: 'base', rev: 'r' }];
+  const unchanged = planSync(base, [local({ id: 'a', path: 'p.md', hash: 'base' })], [], foreign);
+  assert.deepEqual(unchanged.deleteLocal, [], 'an unchanged local record is never destroyed over a foreign path');
+  assert.deepEqual(unchanged.push, [], 'nothing pushes over the unattributable file either');
+  const edited = planSync(base, [local({ id: 'a', path: 'p.md', hash: 'edit' })], [], foreign);
+  assert.deepEqual(edited.conflicts, [], 'no ghost delete-vs-change question about a file that is still there');
+  const fresh = planSync([], [local({ id: 'b', path: 'p.md', hash: 'new' })], [], foreign);
+  assert.deepEqual(fresh.push, [], 'a new record never overwrites an unattributable file');
+  // Without the foreign set the old semantics stand: unchanged + gone-from-
+  // listing is the documented local-deletion discovery (requirement 16).
+  const control = planSync(base, [local({ id: 'a', path: 'p.md', hash: 'base' })], []);
+  assert.equal(control.deleteLocal.length, 1, 'the ordinary remote-deletion path is untouched');
+});

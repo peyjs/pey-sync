@@ -942,6 +942,32 @@ test('should_reject_bad_scope_and_missing_storage_when_checked', async () => {
   assert.equal(missing?.code, 'SYNC_STORAGE_UNAVAILABLE');
 });
 
+test('should_reject_contested_same_extension_same_base_collections_when_scope_is_normalized', async () => {
+  // Round-12 regression: two collections sharing the serializer extension
+  // AND the basePath (two root markdown collections — the default for text
+  // serializers) made remote attribution ambiguous; every remote file of
+  // that extension read as "foreign", the next round destroyed the local
+  // records silently with a complete report. The contention now fails
+  // LOUD at config time, naming both collections.
+  const { service } = setup();
+  await configure(service);
+  const contested = await service.syncNow({ scope: { collections: [
+    { collection: 'docs', serializer: 'markdown', titleField: 'title' },
+    { collection: 'wiki', serializer: 'markdown', titleField: 'title' },
+  ] } }).catch((caught) => caught);
+  assert.equal(contested?.code, 'SYNC_INVALID_CONFIG');
+  assert.deepEqual(contested?.detail?.collections, ['docs', 'wiki']);
+  assert.equal(contested?.detail?.extension, 'md');
+  // Same basePath with DIFFERENT extensions stays legal (no ambiguity).
+  const mixed = setup();
+  await configure(mixed.service);
+  const ok = await mixed.service.hasPendingChanges({ scope: { collections: [
+    { collection: 'docs', serializer: 'markdown', titleField: 'title' },
+    { collection: 'notes', serializer: 'json', idField: 'key', updatedAtField: 'mtime', contentField: 'text' },
+  ] } });
+  assert.deepEqual(ok, { pending: false });
+});
+
 test('should_return_not_pending_when_unconfigured_regardless_of_scope', async () => {
   // Round-11 regression: requirement 25's "unconfigured is always false,
   // never an error" is checked BEFORE the scope is validated — no
