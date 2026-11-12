@@ -1795,3 +1795,50 @@ test('should_record_and_publish_a_mid_resolution_failure_when_the_remote_write_f
   assert.notEqual(changed, undefined, 'the bus hears about the half-applied resolution');
   assert.deepEqual(changed.data.conflicts, [{ collection: 'docs', id: 'd1' }], 'the conflict stays open');
 });
+
+test('should_reject_duplicate_collection_names_when_scope_is_normalized', async () => {
+  // Round-13 regression: two entries sharing one collection name made every
+  // name-keyed config lookup (`configs.find`) return the FIRST entry — one
+  // record serialized through BOTH converters (JSON bytes in a `.md` path)
+  // and pulls of the twin silently skipped into an unresolvable ghost
+  // conflict. The name is the scope's identity; duplicates fail loud.
+  const { service } = setup();
+  await configure(service);
+  const twinSerializer = await service.syncNow({ scope: { collections: [
+    { collection: 'notes', serializer: 'json', idField: 'key', updatedAtField: 'mtime', contentField: 'text' },
+    { collection: 'notes', serializer: 'markdown', titleField: 'title' },
+  ] } }).catch((caught) => caught);
+  assert.equal(twinSerializer?.code, 'SYNC_INVALID_CONFIG');
+  assert.equal(twinSerializer?.detail?.collection, 'notes');
+  const twinBase = await service.hasPendingChanges({ scope: { collections: [
+    { collection: 'docs', serializer: 'markdown', titleField: 'title', basePath: 'docs' },
+    { collection: 'docs', serializer: 'markdown', titleField: 'title', basePath: 'docs2' },
+  ] } }).catch((caught) => caught);
+  assert.equal(twinBase?.code, 'SYNC_INVALID_CONFIG');
+});
+
+test('should_drop_a_both_sides_gone_baseline_entry_and_clear_the_dirty_dot_when_the_round_completes', async () => {
+  // Round-13 regression: a baseline entry whose local record was deleted
+  // and whose remote file was removed externally reached no plan branch —
+  // the round completed with zero operations but the entry survived the
+  // merge, so hasPendingChanges reported `pending: true` forever.
+  const { service, storage, remote } = setup({
+    storageData: { docs: [{ id: 'm1', title: 'محو', content: 'متن' }] },
+    files: {},
+  });
+  await configure(service);
+  await service.syncNow({ scope: SCOPE });
+  assert.ok(remote.files.has('محو.md'), 'the round pushed the file');
+  // Another device deletes the file; the host deletes the record.
+  remote.files.delete('محو.md');
+  await storage.delete('docs', 'm1');
+  const round = await service.syncNow({ scope: SCOPE });
+  assert.equal(round.completed, true);
+  assert.equal(round.deleteLocal.length, 0, 'nothing local left to delete');
+  assert.deepEqual(await service.hasPendingChanges({ scope: SCOPE }), { pending: false }, 'the dead baseline claim is dropped, the dot clears');
+  // And the next round is a stable no-op, not a loop.
+  const next = await service.syncNow({ scope: SCOPE });
+  assert.equal(next.completed, true);
+  assert.equal(next.deleteLocal.length, 0);
+  assert.deepEqual(await service.hasPendingChanges({ scope: SCOPE }), { pending: false });
+});

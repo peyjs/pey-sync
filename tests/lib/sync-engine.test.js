@@ -317,3 +317,26 @@ test('should_leave_unattributed_foreign_paths_out_of_the_plan_when_planning_loca
   const control = planSync(base, [local({ id: 'a', path: 'p.md', hash: 'base' })], []);
   assert.equal(control.deleteLocal.length, 1, 'the ordinary remote-deletion path is untouched');
 });
+
+test('should_report_both_sides_gone_paths_for_baseline_drop_when_planned', () => {
+  // Round-13 regression: a snapshot path with NO local and NO remote
+  // presence used to reach NO plan branch, and mergeRoundSnapshot only
+  // touches outcome paths — the entry survived forever and the dirty dot
+  // pinned `pending: true` with a completed round. The plan now reports
+  // these dead claims explicitly.
+  const plan = planSync(
+    [snap({ id: 'old', path: 'gone.md', hash: 'h' })],
+    [],
+    [],
+  );
+  assert.deepEqual(plan.gonePaths, ['gone.md']);
+  assert.deepEqual(plan.deleteLocal, []);
+  assert.deepEqual(plan.deleteRemote, []);
+  // Paths with a live side are NOT gone.
+  const mixed = planSync(
+    [snap({ id: 'old', path: 'gone.md', hash: 'h' }), snap({ id: 'a', path: 'live.md', hash: 'h' })],
+    [local({ id: 'a', path: 'live.md', hash: 'h' })],
+    [],
+  );
+  assert.deepEqual(mixed.gonePaths, ['gone.md']);
+});
