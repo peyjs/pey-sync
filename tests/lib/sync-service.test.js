@@ -1330,7 +1330,7 @@ test('should_report_an_unreadable_remote_side_as_null_when_the_file_vanishes_bef
   assert.equal(report.conflicts[0].remote.content, null, 'unreadable is null, never an empty string');
 });
 
-test('should_refuse_a_remote_resolution_for_a_conflict_that_was_never_prompted', async () => {
+test('should_refuse_the_remote_resolution_when_the_conflict_was_never_prompted', async () => {
   // FAIL-CLOSED prompt guard: a conflict that comes to life in the resolve's
   // own capture (created between the prompt and the resolve) was never shown
   // to the host — its remote resolution is refused so the host gets a fresh
@@ -1936,5 +1936,73 @@ test('should_push_the_record_to_the_old_path_when_the_foreign_alive_file_dies_ex
   assert.deepEqual(await service.hasPendingChanges({ scope: rootScope }), { pending: false });
   const next = await service.syncNow({ scope: rootScope });
   assert.equal(next.completed, true);
+  assert.deepEqual(await service.hasPendingChanges({ scope: rootScope }), { pending: false });
+});
+
+test('should_pin_the_baseline_hash_when_a_legacy_null_hash_entry_converges_and_settle_the_dirty_dot', async () => {
+  // Round-18 P1 regression: the round-17 convergence recording covered only
+  // the no-before branch — its hash-null SISTER (a legacy-migrated baseline
+  // entry with hash: null, from an unreadable old manifest) still fell
+  // through the equality branch with nothing recorded: the entry read as
+  // "changed" against any hashed record forever (dirty dot never cleared)
+  // and every round re-read the whole remote file (the rev shortcut needs
+  // a string rev, which no branch ever wrote). The equality branch now
+  // records the agreement like its sister.
+  const { service, storage, remote } = setup({ storageData: { docs: [{ id: 'a', title: 'T', content: 'متن' }] }, files: {} });
+  await configure(service);
+  // Simulate the legacy state: a round-1 sync, then overwrite the stored
+  // snapshot entry with the legacy migration shape (hash: null, rev: null).
+  await service.syncNow({ scope: SCOPE });
+  const saved = await storage.read('sync_state', 'active');
+  assert.equal(saved.snapshot.length, 1, 'round one pinned the pushed entry');
+  saved.snapshot = saved.snapshot.map((entry) => ({ ...entry, hash: null, rev: null }));
+  await storage.write('sync_state', saved);
+
+  const round = await service.syncNow({ scope: SCOPE });
+  assert.equal(round.completed, true);
+  assert.equal(round.pushed.length, 0, 'equal content is never rewritten');
+  assert.deepEqual(await service.hasPendingChanges({ scope: SCOPE }), { pending: false }, 'the null-hash entry settled');
+  const settled = await storage.read('sync_state', 'active');
+  assert.equal(settled.snapshot[0].hash === null, false, 'the agreed hash is pinned in the baseline');
+  assert.equal(settled.snapshot[0].rev === null, false, 'the listed rev is pinned too');
+
+  // Once the rev is pinned, the rev shortcut fires: no further FILE reads
+  // across follow-up rounds (the per-round directory listing and the
+  // legacy-manifest probe are not data reads).
+  const dataReads = () => remote.reads().filter((call) => call.url.includes('/contents/T.md')).length;
+  const readsAfterTheSettlingRound = dataReads();
+  await service.syncNow({ scope: SCOPE });
+  await service.syncNow({ scope: SCOPE });
+  assert.equal(dataReads(), readsAfterTheSettlingRound, 'the rev shortcut fires — no further file reads once the rev is pinned');
+});
+
+test('should_push_the_edited_content_to_the_old_path_when_the_foreign_alive_file_dies_and_the_record_was_edited', async () => {
+  // Round-18 P2 regression (the second shape of the round-17 P0, previously
+  // probe-only): record EDITED on the new basePath + external death of the
+  // original file + return to the old basePath — no ghost delete-vs-change
+  // conflict with remote: null, no deletion; the edited content pushes to
+  // the original path and the record keeps its identity.
+  const rootScope = { collections: [{ collection: 'docs', serializer: 'markdown', titleField: 'title' }] };
+  const movedScope = { collections: [{ collection: 'docs', serializer: 'markdown', titleField: 'title', basePath: 'b' }] };
+  const { service, storage, remote } = setup({
+    storageData: { docs: [{ id: 'a', title: 'T', content: 'متن' }] },
+    files: {},
+  });
+  await configure(service);
+  await service.syncNow({ scope: rootScope });
+  await service.syncNow({ scope: movedScope });
+  await storage.write('docs', { id: 'a', title: 'T', content: 'ویرایش محلی' });
+  remote.files.delete('T.md');
+  await service.syncNow({ scope: movedScope });
+  assert.deepEqual(await service.hasPendingChanges({ scope: movedScope }), { pending: false });
+
+  const returned = await service.syncNow({ scope: rootScope });
+  assert.equal(returned.completed, true);
+  assert.deepEqual(returned.conflicts, [], 'no ghost delete-vs-change conflict rooted in a dead claim');
+  assert.equal(returned.deleteLocal.length, 0, 'the edited record is never destroyed');
+  const record = (await storage.query('docs'))[0];
+  assert.equal(record.id, 'a', 'the record keeps its identity');
+  assert.equal(record.content, 'ویرایش محلی');
+  assert.ok(remote.files.has('T.md'), 'the edited content reached the original path');
   assert.deepEqual(await service.hasPendingChanges({ scope: rootScope }), { pending: false });
 });
