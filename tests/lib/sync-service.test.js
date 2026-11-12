@@ -1842,3 +1842,61 @@ test('should_drop_a_both_sides_gone_baseline_entry_and_clear_the_dirty_dot_when_
   assert.equal(next.deleteLocal.length, 0);
   assert.deepEqual(await service.hasPendingChanges({ scope: SCOPE }), { pending: false });
 });
+
+test('should_survive_a_base_path_round_trip_with_a_live_record_and_clear_the_dirty_dot', async () => {
+  // Round-16 P1 regression: the round-14 keep guard lived only in the
+  // PLANNING layer — the merge's id-keyed displacement (one record one
+  // path) still dropped the foreign-alive old-path entry when the same
+  // record pushed at its new path. Round trip root → b → root then lost
+  // the root file from the baseline forever: the converged re-growth
+  // pinned nothing, and hasPendingChanges reported `pending: true` on
+  // every completed no-op round (probe: three rounds, three completions).
+  const rootScope = { collections: [{ collection: 'docs', serializer: 'markdown', titleField: 'title' }] };
+  const movedScope = { collections: [{ collection: 'docs', serializer: 'markdown', titleField: 'title', basePath: 'b' }] };
+  const { service, storage, remote } = setup({
+    storageData: { docs: [{ id: 'a', title: 'T', content: 'متن' }] },
+    files: {},
+  });
+  await configure(service);
+  await service.syncNow({ scope: rootScope });
+  assert.ok(remote.files.has('T.md'));
+
+  await service.syncNow({ scope: movedScope });
+  assert.ok(remote.files.has('b/T.md'), 'the moved basePath pushed its own copy');
+  // The old root entry survives the merge (foreign-alive this round).
+  const saved = await storage.read('sync_state', 'active');
+  assert.ok(saved.snapshot.some((entry) => entry.path === 'T.md'), 'the foreign-alive entry is NOT dropped by the id-keyed displacement');
+
+  await service.syncNow({ scope: rootScope });
+  assert.ok(remote.files.has('T.md'), 'the root file is adjudicated, not forgotten');
+  assert.equal(remote.files.has('b/T.md'), false, 'the stale moved copy is cleaned as the local deletion propagates');
+  assert.deepEqual(await service.hasPendingChanges({ scope: rootScope }), { pending: false }, 'the dirty dot clears after the round trip');
+  const next = await service.syncNow({ scope: rootScope });
+  assert.equal(next.completed, true);
+  assert.deepEqual(await service.hasPendingChanges({ scope: rootScope }), { pending: false });
+});
+
+test('should_propagate_the_deletion_intent_across_a_base_path_round_trip_without_resurrecting_the_record', async () => {
+  // Round-16 P1 regression, delete variant: record deleted + basePath moved
+  // in the same window used to FORGET the foreign-alive root entry in the
+  // merge, so returning to the root pulled the file as "remote-only grown
+  // last round" and RESURRECTED the deleted record with a fresh minted id.
+  const rootScope = { collections: [{ collection: 'docs', serializer: 'markdown', titleField: 'title' }] };
+  const movedScope = { collections: [{ collection: 'docs', serializer: 'markdown', titleField: 'title', basePath: 'b' }] };
+  const { service, storage, remote } = setup({
+    storageData: { docs: [{ id: 'a', title: 'T', content: 'متن' }] },
+    files: {},
+  });
+  await configure(service);
+  await service.syncNow({ scope: rootScope });
+
+  await service.syncNow({ scope: movedScope });
+  await storage.delete('docs', 'a');
+  await service.syncNow({ scope: movedScope });
+  assert.equal(remote.files.has('b/T.md'), false, 'the moved copy is deleted with the record');
+
+  await service.syncNow({ scope: rootScope });
+  assert.deepEqual(await storage.query('docs'), [], 'the deleted record is NEVER resurrected with a fresh id');
+  assert.equal(remote.files.has('T.md'), false, 'the user deletion intent propagates to the original remote file');
+  assert.deepEqual(await service.hasPendingChanges({ scope: rootScope }), { pending: false });
+});
