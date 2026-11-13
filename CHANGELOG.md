@@ -1,8 +1,6 @@
 # Changelog — pey.sync
 
-## [2.0.1] - 1405-08-19
-
-Round-3 through round-21 review fixes (all unpublished; one release). No contract change; `sync:changed` items now match their documented shape exactly.
+## [2.0.1] - 1405-08-22
 
 ### Fixed
 
