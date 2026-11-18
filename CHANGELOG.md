@@ -1,66 +1,59 @@
-# Changelog — pey.sync
+# تاریخچه تغییرات
+
+تمام تغییرات این پروژه در همین فایل ثبت می‌شود.
+قالب فایل بر پایه‌ی [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) و نسخه‌گذاری بر پایه‌ی [Semantic Versioning](https://semver.org/) است.
 
 ## [2.0.1] - 1405-08-22
 
-### Fixed
+### برطرف‌شده
 
-- **Nothing is destroyed without asking**: a takeover push whose remote file drifted from the snapshot reaches a conflict; a foreign-alive path is never a local deletion, a ghost delete-vs-change question or a push over the unattributable file — and its baseline entry survives the merge's id-keyed displacement, conditioned on the file being ALIVE in this round's listing; a dead claim flows into the normal gone branch; a converged re-growth (record and untouched file agreeing at a dropped-claim path) is recorded, so the dirty dot always clears and deleted records are never silently resurrected with a fresh id.
-- **Configuration fails loud on ambiguity**: two collections sharing the serializer extension AND the basePath, and duplicate collection names, are refused with `SYNC_INVALID_CONFIG` — remote attribution ambiguity can no longer read the engine's own files as "foreign" and destroy local records.
-- **Legacy migration settles**: a null-hash baseline entry (unreadable old manifest) that agrees on both sides records the agreed hash/rev — the dirty dot clears and the rev shortcut stops the per-round file re-reads.
-- **Prompt freshness is fail-closed everywhere**: a conflict never presented in a report, a stale remote hash on any destructive choice, twin open conflicts with one `(collection, id)` (refused with `SYNC_INVALID_CONFIG`), and pins that belong to the destination only — every branch that could destroy remote or local content is guarded, and the docs' guard-refusal wording matches the observable behavior.
-- Reference/requirements sync for all of the above (253 tests).
+- هیچ چیز بدون پرسش نابود نمی‌شود: فایل ریموتی که از عکس دور شده به تعارض می‌رسد و مدخل پایه‌اش در ادغام جان سالم به در می‌برد.
+- پیکربندی مبهم بلند رد می‌شود: دو کالکشن با هم‌پسوند مبدل و هم‌basePath یا نام تکراری با `SYNC_INVALID_CONFIG` رد می‌شوند.
+- مهاجرت عکس قدیمی مستقر می‌شود و مدخل پایهٔ بی‌هشِ متفق‌القول، هش و rev را ثبت می‌کند.
+- گارد تازگی پین در همهٔ شاخه‌های نابودکنندهٔ محتوا اجرا می‌شود و تعارض گزارش‌نشده هرگز پرسش نمی‌گیرد.
+- مرجع و نیازمندی‌ها با رفتارها همگام شدند.
 
 ## [2.0.0] - 1405-08-15
 
-Review-fix release. **Breaking:** the `sync:conflicts` event is renamed to `sync:conflicted` to follow the Bonyan past-tense event naming rule — listeners must update.
+### دگرگون‌شده
 
-### Fixed (second review pass)
+- **ناسازگار:** رویداد `sync:conflicts` به `sync:conflicted` تغییر نام یافت؛ شنونده‌ها باید نام را به‌روز کنند.
+- هش تغییر FNV-1a ۳۲-بیتی و معاملهٔ برخوردش مستند شد.
+- `planSync` و `applyRoundPlan` به یاران کوچک شکسته شدند و فایل‌های آزمون بر پایهٔ منبع چیده شدند.
 
-- A rev mismatch on the planned remote DELETE now maps to `SYNC_CONCURRENT_CHANGE` in both backends (git 409/422, GitLab 400/409) instead of reading as a network failure.
-- `SYNC_REMOTE_INVALID` and `SYNC_PATH_COLLISION` are declared in the manifest for `resolveConflict` (its capture phase can raise both).
-- The resolution CAS guard is fail-closed on storage read failures: the resolution is skipped and the conflict stays open instead of proceeding on unknown state.
-- A freshly re-read remote conflict content is verified against the plan-time hash before adoption; a mid-window change skips the resolution so the user never accepts content they did not preview.
-- A failed `resolveConflict` lands in `lastError` and reaches the bus as a partial `sync:changed` (same pattern as `syncNow`); a half-applied resolution is never unreported.
-- `sync:changed` after a resolution carries the real `pushed`/`pulled` outcomes of that resolution (a local-side resolution writes to the remote).
+### برطرف‌شده
 
-### Fixed
-
-- CAS now also guards conflict resolution: `applyRemoteResolution` re-reads the local record and compares it with the plan-time state before the adoption write or the delete-vs-change deletion; a host edit racing the prompt skips the resolution and keeps the conflict open (`remaining` reflects it).
-- `sync:changed` after `resolveConflict` carries the real open-conflict set (other pending conflicts included) instead of always an empty array.
-- GitHub DELETE responses with 401 map to `GIT_AUTH_FAILED` (and a rate-limited 403 to `GIT_RATE_LIMITED`), mirroring the write path — an invalidated token mid-round no longer reads as a network failure.
-- `npm test` now discovers the whole tree (`node --test`): the five entry-point tests were silently excluded by the old non-recursive glob.
-- `onDeactivated` unsubscribes from `core:service-unavailable` like `onShutdown` already did.
-- `titleOf` fallback is an honest empty string instead of the unexplained `'|'`; the corrupted `matchesExtension` comment now matches the (case-insensitive) code.
-
-### Changed
-
-- The 32-bit FNV-1a change-detection hash and its ~2⁻³² collision trade-off are documented (reference + engine JSDoc).
-- `planSync` and `applyRoundPlan` are split into small decision/apply helpers; per-source test files added for `sync-remote`, `sync-round`, `sync-store` and `adapters/shared`; `tests/sync.test.js` renamed to `tests/entry.test.js`; new tests cover 401/rate-limit on git write/delete, `remaining > 0` resolutions, an end-to-end `SYNC_CONCURRENT_CHANGE`, and shutdown unsubscribe.
+- ناهمخوانی rev در حذف ریموت به `SYNC_CONCURRENT_CHANGE` نگاشت می‌شود.
+- `SYNC_REMOTE_INVALID` و `SYNC_PATH_COLLISION` در مانیفست برای `resolveConflict` اعلام شدند.
+- گارد CAS رفع تعارض در شکست خواندن storage بسته می‌شود و تعارض باز می‌ماند.
+- محتوای ریموتِ تازه‌خوانده با هش زمان برنامه‌ریزی راستی‌آزمایی می‌شود.
+- شکست `resolveConflict` در `lastError` ثبت و با `sync:changed` ناتمام منتشر می‌شود.
+- رویداد `sync:changed` پس از رفع تعارض نتیجهٔ واقعی آن و فهرست کامل تعارض‌های باز را حمل می‌کند.
+- پاسخ‌های ۴۰۱/۴۰۳ حذف گیت‌هاب به `GIT_AUTH_FAILED` و `GIT_RATE_LIMITED` نگاشت می‌شوند.
+- اسکریپت آزمون به کشف بازگشتی (`node --test`) تغییر کرد.
+- `onDeactivated` هم اشتراک `core:service-unavailable` را آزاد می‌کند.
+- fallback عنوان و کامنت `matchesExtension` اصلاح شد.
 
 ## [1.1.0] - 1405-08-08
 
-Hardening release after an external review (six reproduced defects plus five static risks, each fixed with a regression test).
+### دگرگون‌شده
 
-### Fixed
+- عملیات دگرگون‌کننده تک‌پرواز شدند و تداخل با `SYNC_IN_PROGRESS` رد می‌شود.
+- ۴۰۴ فهرست ریشه دیگر درخت تهی خوانده نمی‌شود.
+- pagination گیت‌لب با سقف ۵۰ صفحه و گارد حلقه محدود شد.
+- پاک‌سازی legacy فقط مسیر مانیفست شناخته‌شده را حذف می‌کند.
+- `source` خطاها نام افزونه شد و رجیستری‌ها با کلید خودی می‌گردند.
+- `adapterType: "sync-target"` از مانیفست حذف شد و قرارداد آن داخلی مستند شد.
 
-- The baseline advances only from the round's verified outcomes (the content actually written, with its revision) instead of re-reading the whole store, and every local overwrite/delete compares the record against the round's baseline first (CAS) — a host edit racing the round is skipped and stays dirty instead of being marked synced behind stale content.
-- Switching destinations (repo/branch/URL) now resets the baseline: the new target's emptiness reads as a first sync (everything pushes), never as "everything was remotely deleted". Token-only changes keep the state. Identity is `(kind, baseUrl, repo, branch)`.
-- A corrupt remote file the serializer cannot decode stops the round with `SYNC_REMOTE_INVALID` before any write or deletion, instead of disappearing from the listing and reading as "remotely deleted".
-- Delete-vs-edit conflicts now accept a `local` resolution: the remote file is deleted (rev-guarded) and the local deletion stands.
-- `basePath` round-trips symmetrically for both serializers (outgoing paths join it, incoming paths strip it; `..`/empty segments are rejected).
-- A failure inside `finalizeRound` now rides the mapped run-error path (recorded as `lastError`, published) instead of escaping raw past the catch.
+### برطرف‌شده
 
-### Changed
-
-- Mutating operations (sync/resolve/configure/remove) run single-flight: overlaps reject with the new `SYNC_IN_PROGRESS`.
-- Root-listing 404 is no longer read as an empty tree: both adapters verify the destination still exists first, so a deleted branch can never trigger mass local deletions.
-- GitLab pagination only follows Link targets inside the configured instance and API path prefix, with a 50-page cap and a loop guard.
-- Legacy cleanup deletes only the known root manifest path (`sync-manifest.json`), and only when a readable legacy manifest was actually seen; paths merely named in an old manifest are never touched.
-- Error `source` is the plugin name (`pey.sync`), per the Bonyan error convention; serializer and backend registries use own-property lookups; adapter factory and param-normalization failures are mapped inside the error boundary.
-- The manifest no longer declares `adapterType: "sync-target"`: backend selection is a dynamic, user-driven runtime choice, so the `sync-target` contract is documented as plugin-internal (same pattern as pey-filesystem's environment adapter).
+- پیشبرد عکس فقط از نتایج تأییدشدهٔ دور انجام می‌شود و هر بازنویسی/حذف محلی با CAS گارد می‌گیرد.
+- تعویض مقصد عکس را صفر می‌کند و خالی‌بودن مقصد تازه به‌شکل همگام‌سازی نخست خوانده می‌شود.
+- فایل ریموت خراب دور را با `SYNC_REMOTE_INVALID` پیش از هر نوشتن/حذفی متوقف می‌کند.
+- تعارض حذف-دربرابر-تغییر گزینهٔ `local` را می‌پذیرد.
+- `basePath` رفت‌وبرگشتی برای هر دو مبدل یکسان اعمال می‌شود.
+- شکست در `finalizeRound` در مسیر خطای نگاشت‌شده می‌ماند.
 
 ## [1.0.0] - 1405-08-08
 
-Initial pey release: manual, backend-neutral sync of `pey.storage` collections — path-keyed three-way engine, `git` (GitHub Contents API) and `gitlab` (GitLab Files API) backends extensible through the `sync-target` descriptor contract, ignore patterns, custom commit messages, legacy-snapshot migration, conflict prompts with both-side previews, and `docs/requirements.md` (numbered pey format) as the construction source of truth. Conflict resolution applies the chosen side exactly: a `remote` choice on a delete-vs-change conflict deletes the local record, and resolving a path-takeover conflict frees the displaced owner's snapshot entry so the same conflict cannot re-fire.
-
-> Incubated in Parsinegar as 0.1.0–0.4.0; that history stays with the source project — the pey release lineage starts here.
+نخستین انتشار در پی: همگام‌سازی دستی و backend-neutral کالکشن‌های `pey.storage` — موتور سه‌سویهٔ مسیرمحور، بک‌اندهای `git` و `gitlab` با قرارداد دیسکریپتور تازه، الگوهای ignore، پیام کامیت سفارشی، مهاجرت عکس قدیمی و پرسش تعارض با پیش‌نمای هر دو سو؛ پیش از این انتشار در پارسی‌نگار (0.1.0–0.4.0) پرورش یافته بود.
