@@ -1,6 +1,6 @@
 {
   "name": "pey.sync",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "architecture": "0.11",
   "description": "Generic user-configured sync for pey.storage collections (first backend: git)",
   "type": "infrastructure",
@@ -44,6 +44,15 @@
             { "name": "scope", "type": "object" }
           ],
           "returns": "Promise<object>",
+          "errors": ["SYNC_INVALID_CONFIG", "SYNC_STORAGE_UNAVAILABLE"]
+        },
+        {
+          "name": "getPendingChanges",
+          "description": "Lists the local documents created, edited or deleted since the last sync, computed locally only (no network, no writes); a rename reads as a deletion at the old path plus a creation at the new one",
+          "params": [
+            { "name": "scope", "type": "object" }
+          ],
+          "returns": "Promise<{ pending: boolean, created: Array<{ collection: string, id: string, path: string, title: string | null, updatedAt: number }>, edited: Array<{ collection: string, id: string, path: string, title: string | null, updatedAt: number }>, deleted: Array<{ collection: string, id: string, path: string }> }>",
           "errors": ["SYNC_INVALID_CONFIG", "SYNC_STORAGE_UNAVAILABLE"]
         },
         {

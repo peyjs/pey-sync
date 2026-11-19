@@ -240,6 +240,171 @@ test('should_report_clean_after_completed_sync_when_checked', async () => {
   assert.equal(remote.calls.length, before, 'expected no network for the check');
 });
 
+test('should_list_created_edited_and_deleted_without_network_when_previewed', async () => {
+  // Nothing has been synced yet, so every plannable record reads as
+  // created; the preview is the same local-only computation as the dirty
+  // dot, with the actual lists instead of the boolean.
+  const { service, remote } = setup({
+    storageData: {
+      docs: [{ id: 'd1', title: 'یادداشت', content: 'سلام', folderId: null, updatedAt: 20 }],
+    },
+  });
+  await configure(service);
+  const before = remote.calls.length;
+  const preview = await service.getPendingChanges({ scope: SCOPE });
+  assert.equal(preview.pending, true);
+  assert.deepEqual(preview.created, [
+    { collection: 'docs', id: 'd1', path: 'یادداشت.md', title: 'یادداشت', updatedAt: 20 },
+  ]);
+  assert.deepEqual(preview.edited, []);
+  assert.deepEqual(preview.deleted, []);
+  assert.equal(remote.calls.length, before, 'expected no network for the preview');
+});
+
+test('should_separate_created_from_edited_when_the_snapshot_exists', async () => {
+  const { service, storage } = setup({
+    storageData: {
+      docs: [{ id: 'd1', title: 'یادداشت', content: 'سلام', folderId: null, updatedAt: 20 }],
+    },
+  });
+  await configure(service);
+  const round = await service.syncNow({ scope: SCOPE });
+  assert.equal(round.completed, true);
+  // One record edited in place, one brand new.
+  const docs = await storage.query('docs');
+  await storage.write('docs', { ...docs.find((record) => record.id === 'd1'), content: 'سلام دوباره' });
+  await storage.write('docs', { id: 'd2', title: 'سفر', content: 'تهران', folderId: null, updatedAt: 30 });
+  const preview = await service.getPendingChanges({ scope: SCOPE });
+  assert.equal(preview.pending, true);
+  assert.deepEqual(preview.edited, [
+    { collection: 'docs', id: 'd1', path: 'یادداشت.md', title: 'یادداشت', updatedAt: 20 },
+  ]);
+  assert.deepEqual(preview.created, [
+    { collection: 'docs', id: 'd2', path: 'سفر.md', title: 'سفر', updatedAt: 30 },
+  ]);
+  assert.deepEqual(preview.deleted, []);
+});
+
+test('should_list_deletions_from_the_snapshot_when_previewed', async () => {
+  const { service, storage } = setup({
+    storageData: {
+      docs: [{ id: 'd1', title: 'یادداشت', content: 'سلام', folderId: null, updatedAt: 20 }],
+    },
+  });
+  await configure(service);
+  const round = await service.syncNow({ scope: SCOPE });
+  assert.equal(round.completed, true);
+  await storage.delete('docs', 'd1');
+  const preview = await service.getPendingChanges({ scope: SCOPE });
+  assert.equal(preview.pending, true);
+  assert.deepEqual(preview.deleted, [{ collection: 'docs', id: 'd1', path: 'یادداشت.md' }]);
+  assert.deepEqual(preview.created, []);
+  assert.deepEqual(preview.edited, []);
+});
+
+test('should_read_a_rename_as_deletion_plus_creation_when_previewed', async () => {
+  // Path identity: moving the record to a new title moves the remote path,
+  // so the local-only preview sees the old path deleted and the new one
+  // created — the same shape the next round acts on.
+  const { service, storage } = setup({
+    storageData: {
+      docs: [{ id: 'd1', title: 'یادداشت', content: 'سلام', folderId: null, updatedAt: 20 }],
+    },
+  });
+  await configure(service);
+  const round = await service.syncNow({ scope: SCOPE });
+  assert.equal(round.completed, true);
+  const docs = await storage.query('docs');
+  await storage.write('docs', { ...docs.find((record) => record.id === 'd1'), title: 'سفر' });
+  const preview = await service.getPendingChanges({ scope: SCOPE });
+  assert.deepEqual(preview.deleted, [{ collection: 'docs', id: 'd1', path: 'یادداشت.md' }]);
+  assert.deepEqual(preview.created, [
+    { collection: 'docs', id: 'd1', path: 'سفر.md', title: 'سفر', updatedAt: 20 },
+  ]);
+  assert.deepEqual(preview.edited, []);
+});
+
+test('should_return_empty_lists_when_unconfigured_regardless_of_scope', async () => {
+  // Same "unconfigured is never an error" contract as the dirty dot:
+  // empty lists, checked BEFORE the scope is validated.
+  const fresh = setup({
+    storageData: {
+      docs: [{ id: 'd1', title: 'یادداشت', content: 'سلام', folderId: null, updatedAt: 20 }],
+    },
+  });
+  const empty = await fresh.service.getPendingChanges({ scope: { collections: [] } });
+  assert.deepEqual(empty, { pending: false, created: [], edited: [], deleted: [] });
+  const unknown = await fresh.service.getPendingChanges({ scope: { collections: [{ collection: 'nope', serializer: 'markdown' }] } });
+  assert.deepEqual(unknown, { pending: false, created: [], edited: [], deleted: [] });
+});
+
+test('should_not_report_ignored_records_when_previewed', async () => {
+  const { service } = setup({
+    storageData: {
+      docs: [{ id: 'd1', title: 'آرشیو', content: 'کهنه', folderId: null, updatedAt: 20 }],
+    },
+  });
+  await configure(service);
+  const ignoredScope = { collections: [{ collection: 'docs', serializer: 'markdown', titleField: 'title', ignore: ['آرشیو'] }] };
+  const preview = await service.getPendingChanges({ scope: ignoredScope });
+  assert.deepEqual(preview, { pending: false, created: [], edited: [], deleted: [] });
+});
+
+test('should_not_write_anything_when_previewed', async () => {
+  // The preview is read-only: the stored snapshot and backend records are
+  // identical after the check, no network call happens, and the next real
+  // round still owns the whole pending set.
+  const { service, storage, remote } = setup({
+    storageData: {
+      docs: [{ id: 'd1', title: 'یادداشت', content: 'سلام', folderId: null, updatedAt: 20 }],
+    },
+  });
+  await configure(service);
+  const backendBefore = await storage.read('sync_backends', 'active');
+  const stateBefore = await storage.read('sync_state', 'active');
+  const callsBefore = remote.calls.length;
+  await service.getPendingChanges({ scope: SCOPE });
+  assert.deepEqual(await storage.read('sync_backends', 'active'), backendBefore);
+  assert.deepEqual(await storage.read('sync_state', 'active'), stateBefore);
+  assert.equal(remote.calls.length, callsBefore);
+  const round = await service.syncNow({ scope: SCOPE });
+  assert.deepEqual(round.pushed.map((item) => item.id), ['d1']);
+});
+
+test('should_reject_bad_scope_and_missing_storage_when_previewed', async () => {
+  const { service } = setup();
+  await configure(service);
+  const bad = await service.getPendingChanges({ scope: { collections: [] } }).catch((caught) => caught);
+  assert.equal(bad?.code, 'SYNC_INVALID_CONFIG');
+  const offline = createService({ storage: null, events: events(), fetchFn: async () => ({}) });
+  const missing = await offline.getPendingChanges({ scope: SCOPE }).catch((caught) => caught);
+  assert.equal(missing?.code, 'SYNC_STORAGE_UNAVAILABLE');
+});
+
+test('should_read_a_hashless_legacy_entry_as_edited_when_previewed', async () => {
+  // A legacy-migrated baseline entry (hash: null from an unreadable old
+  // manifest) is an unknown base: the preview reads it as edited until the
+  // next round settles the agreement — the same semantics as the dirty dot.
+  const { service, storage } = setup({
+    storageData: {
+      docs: [{ id: 'd1', title: 'یادداشت', content: 'سلام', folderId: null, updatedAt: 20 }],
+    },
+  });
+  await configure(service);
+  const round = await service.syncNow({ scope: SCOPE });
+  assert.equal(round.completed, true);
+  const saved = await storage.read('sync_state', 'active');
+  saved.snapshot = saved.snapshot.map((entry) => ({ ...entry, hash: null, rev: null }));
+  await storage.write('sync_state', saved);
+  const preview = await service.getPendingChanges({ scope: SCOPE });
+  assert.equal(preview.pending, true);
+  assert.deepEqual(preview.edited, [
+    { collection: 'docs', id: 'd1', path: 'یادداشت.md', title: 'یادداشت', updatedAt: 20 },
+  ]);
+  assert.deepEqual(preview.created, []);
+  assert.deepEqual(preview.deleted, []);
+});
+
 test('should_push_everything_on_first_sync_when_synced', async () => {
   const { service, remote, events: bus } = setup({
     storageData: {

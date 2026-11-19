@@ -21,7 +21,7 @@ A manual, backend-neutral sync engine for `pey.storage.service` collections into
 - `lib/sync-backend.js` — the kind registry and adapter error mapping.
 - `lib/sync-state.js` — local persistence (guards, errors, scope, migration, snapshot advance).
 - `lib/sync-store.js` — the storage-loss guard.
-- `lib/sync-service.js` — the six service methods (thin assembly over the modules).
+- `lib/sync-service.js` — the seven service methods (thin assembly over the modules).
 - `adapters/git-adapter.js` — the git backend over the GitHub Contents API; `branch` is optional and defaults to `main` (even when a stored record has `null`); a paginated listing that reaches the silent cap of 1,000 entries fails loudly with `GIT_DIRECTORY_TRUNCATED` (mapped to `SYNC_REMOTE_INVALID`) — a partial list is never the basis of a deletion decision.
 - `adapters/gitlab-adapter.js` — the gitlab backend over the GitLab Files API (gitlab.com and self-hosted with `baseUrl`); rev = blob sha, locked on `last_commit_id` after a verification GET.
 - `adapters/shared.js` — the 30-second timeout, the base64 codec and the shared git commit message.
@@ -86,6 +86,14 @@ await sync.removeBackend(); // → { ok: true } (local data untouched)
 await sync.hasPendingChanges({ scope });
 // → { pending: true/false } (local-only news relative to the last snapshot;
 // an unconfigured backend is always false, not an error)
+
+// 6. Local pre-flight with the actual lists (no network, no writes)
+await sync.getPendingChanges({ scope });
+// → { pending: true, created: [{ collection, id, path, title, updatedAt }],
+//     edited:  [{ collection, id, path, title, updatedAt }],
+//     deleted: [{ collection, id, path }] }
+// Each list is sorted by `collection` + `path`. A rename reads as a
+// deletion at the old path plus a creation at the new one (path identity).
 ```
 
 Notes:
@@ -97,7 +105,7 @@ Notes:
 - If the host has more than one open conflict with the same `(collection, id)` (the record-rename shape on an occupied path while the old remote path was edited — two prompts with one id), `resolveConflict` refuses with `SYNC_INVALID_CONFIG`: two same-id prompts are not separately addressable and the ambiguity must be resolved by the data itself (e.g. the record no longer claims both paths). Deleting the old path during a rename application is also skipped while a conflict on that path is open, so unseen content stays with its own prompt.
 - Pins are bound to the destination: `removeBackend` and a destination switch empty the pin list, so a stale destination's pin can never authorize a fresh destination's resolution.
 - On a delete-vs-change conflict each choice applies its own side: `local` deletes the remote file, `remote` revives the remote content — with the same freshness-guard exception.
-- `hasPendingChanges` is the same hash comparison as `syncNow` without network: it understands "local news" but not falling-behind against the remote.
+- `hasPendingChanges` is the same hash comparison as `syncNow` without network: it understands "local news" but not falling-behind against the remote. `getPendingChanges` runs the identical computation and returns the actual lists instead of the boolean: ignored and out-of-scope records never appear, an unconfigured backend yields empty lists (never an error), nothing is written (no snapshot migration), and a legacy hash-less snapshot entry reads as `edited` until the next round settles it.
 
 ### Scope (per-collection fields)
 
